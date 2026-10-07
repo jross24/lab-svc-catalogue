@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { RetentionDays } from 'aws-cdk-lib/aws-logs';
+import { FUNCTION_MEMORY_MB } from '../lib/function-defaults.ts';
 import { CatalogueStack, FUNCTION_TIMEOUT, LATENCY_P99_THRESHOLD_MS } from '../lib/catalogue-stack.ts';
 import type { StageConfig } from '../lib/stages.ts';
 
@@ -62,7 +63,7 @@ describe('CatalogueStack', () => {
       Properties: { PolicyDocument: { Statement: { Action: string | string[]; Effect: string; Resource: unknown }[] } };
     };
     const statements = policy.Properties.PolicyDocument.Statement;
-    // Active tracing adds the X-Ray statement. No other statement exists, so the function can do nothing else.
+    // The stack adds the X-Ray statement for the spans. No other statement exists, so the function can do nothing else.
     expect(statements).toHaveLength(2);
     expect(statements).toContainEqual({
       Action: 'execute-api:Invoke',
@@ -70,7 +71,7 @@ describe('CatalogueStack', () => {
       Resource: { Ref: ssmParameterId(template, '/lab/core/api-arn') },
     });
     expect(statements).toContainEqual({
-      Action: ['xray:PutTraceSegments', 'xray:PutTelemetryRecords'],
+      Action: 'xray:PutTraceSegments',
       Effect: 'Allow',
       Resource: '*',
     });
@@ -361,31 +362,48 @@ describe('the alarms', () => {
   });
 });
 
+describe('the function settings', () => {
+  const { template } = synth();
+
+  it('has 512 MB of memory, so the first request does not wait for the trace export for long', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', { MemorySize: FUNCTION_MEMORY_MB });
+    expect(FUNCTION_MEMORY_MB).toBe(512);
+  });
+
+  it('uses the handler index.handler of an ES module', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', { Handler: 'index.handler' });
+  });
+});
+
 describe('tracing', () => {
   const { template } = synth();
 
-  it('turns on active tracing of the function', () => {
-    template.hasResourceProperties('AWS::Lambda::Function', { TracingConfig: { Mode: 'Active' } });
+  it('does not turn on active tracing of Lambda, because OpenTelemetry makes the traces', () => {
+    // Active tracing would make a second trace for each call, with another trace ID.
+    const [fn] = Object.values(template.findResources('AWS::Lambda::Function')) as { Properties: { TracingConfig?: unknown } }[];
+    expect(fn?.Properties.TracingConfig).toBeUndefined();
   });
 
-  it('lets the function role send segments to X-Ray', () => {
+  it('lets the function role send spans to X-Ray, and nothing else of X-Ray', () => {
     template.hasResourceProperties('AWS::IAM::Policy', {
       PolicyDocument: {
-        Statement: Match.arrayWith([
-          Match.objectLike({
-            Action: ['xray:PutTraceSegments', 'xray:PutTelemetryRecords'],
-            Effect: 'Allow',
-          }),
-        ]),
+        Statement: Match.arrayWith([Match.objectLike({ Action: 'xray:PutTraceSegments', Effect: 'Allow', Resource: '*' })]),
       },
     });
+    const text = JSON.stringify(template.toJSON());
+    expect(text.match(/xray:[A-Za-z]+/g)).toEqual(['xray:PutTraceSegments']);
   });
 
-  it('uses no Lambda layer', () => {
+  it('uses no Lambda layer, so no account ID of another publisher is in the template', () => {
     const functions = Object.values(template.findResources('AWS::Lambda::Function')) as {
       Properties: { Layers?: unknown };
     }[];
     expect(functions[0]?.Properties.Layers).toBeUndefined();
+  });
+
+  it('leaves CloudWatch Transaction Search to the core stack', () => {
+    template.resourceCountIs('AWS::XRay::TransactionSearchConfig', 0);
+    template.resourceCountIs('AWS::Logs::ResourcePolicy', 0);
   });
 });
 

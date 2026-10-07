@@ -201,3 +201,62 @@ describe('products handler telemetry with a fake core', () => {
     expect(JSON.parse(written[1] ?? '')).toMatchObject({ errors: 1 });
   });
 });
+
+// The tests above run with OpenTelemetry off, as on a laptop. This test turns it on the way Lambda does, with the
+// variable AWS_LAMBDA_FUNCTION_NAME. The handler then uses the real tracing, the real exporter and the real call to core.
+// The only fake is the network: one fetch plays the API of core and the OTLP endpoint of X-Ray.
+describe('products handler with OpenTelemetry on', () => {
+  const TRACE = '4bf92f3577b34da6a3ce929d0e0e4736';
+  const CALLER_SPAN = '00f067aa0ba902b7';
+
+  interface OtlpSpan {
+    readonly name: string;
+    readonly kind: number;
+    readonly traceId: string;
+    readonly spanId: string;
+    readonly parentSpanId?: string;
+  }
+
+  it('sends one trace through the call to core, exports its two spans, and puts the trace ID into the log line', async () => {
+    stubEnvironment();
+    vi.stubEnv('AWS_LAMBDA_FUNCTION_NAME', 'lab-svc-catalogue-ProductsFunction');
+    const written = collectStdout();
+    const calls: { url: string; headers: Record<string, string>; body?: string }[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: { headers: Record<string, string>; body?: string }) => {
+        calls.push({ url, headers: init.headers, body: init.body });
+        return url.startsWith('https://xray.') ? new Response('{}') : Response.json({ service: 'core', version: '0.3.0', items: [] });
+      }),
+    );
+    // The module reads the variable when it loads, so load a fresh copy after the variable is set.
+    vi.resetModules();
+    const { handler: traced } = await import('../lib/products-handler.ts');
+
+    const event = {
+      routeKey: 'GET /products',
+      rawPath: '/products',
+      headers: { traceparent: `00-${TRACE}-${CALLER_SPAN}-01` },
+      requestContext: { http: { method: 'GET' } },
+    } as unknown as APIGatewayProxyEventV2;
+    const response = await traced(event, CONTEXT);
+    expect(response.statusCode).toBe(200);
+
+    const core = calls.find((call) => call.url.startsWith('https://abc123.'));
+    const xray = calls.find((call) => call.url === 'https://xray.eu-west-2.amazonaws.com/v1/traces');
+    expect(calls).toHaveLength(2);
+    expect(core?.headers.traceparent).toMatch(new RegExp(`^00-${TRACE}-[0-9a-f]{16}-01$`));
+    expect(core?.headers.authorization).not.toContain('traceparent');
+
+    const exported = JSON.parse(xray?.body ?? '{}') as { resourceSpans: { scopeSpans: { spans: OtlpSpan[] }[] }[] };
+    const spans = exported.resourceSpans.flatMap((resource) => resource.scopeSpans.flatMap((scope) => scope.spans));
+    const server = spans.find((span) => span.name === 'GET /products');
+    const client = spans.find((span) => span.name.startsWith('GET abc123.'));
+    expect(spans).toHaveLength(2);
+    expect(server).toMatchObject({ traceId: TRACE, parentSpanId: CALLER_SPAN });
+    expect(client).toMatchObject({ traceId: TRACE, parentSpanId: server?.spanId });
+    expect(core?.headers.traceparent).toBe(`00-${TRACE}-${client?.spanId}-01`);
+
+    expect(JSON.parse(written[0] ?? '')).toMatchObject({ route: 'GET /products', traceId: '1-4bf92f35-77b34da6a3ce929d0e0e4736' });
+  });
+});

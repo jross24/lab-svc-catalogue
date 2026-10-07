@@ -3,11 +3,12 @@ import { CfnOutput, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import { CfnIntegration, HttpApi, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
-import { CfnPermission, Runtime, Tracing } from 'aws-cdk-lib/aws-lambda';
+import { CfnPermission, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { LogGroup } from 'aws-cdk-lib/aws-logs';
 import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import type { Construct } from 'constructs';
+import { FUNCTION_BUNDLING, FUNCTION_MEMORY_MB } from './function-defaults.ts';
 import { GradualRelease } from './gradual-release.ts';
 import { ServiceDashboard } from './service-dashboard.ts';
 import type { StageConfig } from './stages.ts';
@@ -43,8 +44,9 @@ export class CatalogueStack extends Stack {
       entry: fileURLToPath(new URL('./products-handler.ts', import.meta.url)),
       runtime: Runtime.NODEJS_22_X,
       timeout: FUNCTION_TIMEOUT,
-      // Lambda sends a segment to X-Ray for each call. The README of lab-svc-core explains why this is the tracing choice.
-      tracing: Tracing.ACTIVE,
+      memorySize: FUNCTION_MEMORY_MB,
+      bundling: FUNCTION_BUNDLING,
+      // No active tracing of Lambda: OpenTelemetry makes the traces (lib/tracing.ts). The README of lab-svc-core explains why.
       environment: {
         // The version of the release is a part of the function, so each release publishes a new Lambda version.
         VERSION: props.version,
@@ -62,6 +64,10 @@ export class CatalogueStack extends Stack {
     productsFunction.addToRolePolicy(
       new PolicyStatement({ actions: ['execute-api:Invoke'], resources: [coreApiArn] }),
     );
+    // The function sends its spans to the OTLP endpoint of X-Ray. The endpoint checks this permission.
+    // X-Ray actions do not support a resource, so the resource is *.
+    // The endpoint works only with Transaction Search, which the core stack turns on for the account.
+    productsFunction.addToRolePolicy(new PolicyStatement({ actions: ['xray:PutTraceSegments'], resources: ['*'] }));
 
     // The alias `live` is what the API calls. CodeDeploy moves the traffic of the alias to each new version.
     // The service answers 502 when the call to core fails, and it does not throw. Lambda counts no error then,
