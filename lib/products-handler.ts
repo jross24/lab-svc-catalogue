@@ -1,8 +1,9 @@
 import type { APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { CoreError, fetchCoreSummary } from './core-client.ts';
 import type { CoreSummary } from './core-client.ts';
+import { instrument } from './instrument.ts';
 
-type JsonResponse = APIGatewayProxyStructuredResultV2 & { readonly body: string };
+type JsonResponse = APIGatewayProxyStructuredResultV2 & { readonly statusCode: number; readonly body: string };
 
 const SERVICE = 'catalogue';
 const CORE_FAILED = 'The call to the core service failed.';
@@ -12,6 +13,14 @@ const PRODUCTS = [
   { id: 'product-1', name: 'First product', price: 10 },
   { id: 'product-2', name: 'Second product', price: 20 },
 ] as const;
+
+// The one place where the service fails on purpose. The stage config sets INJECT_FAULT for a stage.
+// It is a device for the release drill, not a practice for production. See "The Production drill" in the README.
+function failOnPurpose(): void {
+  if (process.env.INJECT_FAULT === 'true') {
+    throw new Error('injected fault: the stage config of this release sets injectFault');
+  }
+}
 
 function json(statusCode: number, body: Record<string, unknown>): JsonResponse {
   return {
@@ -25,6 +34,7 @@ function json(statusCode: number, body: Record<string, unknown>): JsonResponse {
 // A test gives its own getCore, so it needs no network and no AWS credentials.
 export function createHandler(getCore: () => Promise<CoreSummary>): () => Promise<JsonResponse> {
   return async () => {
+    failOnPurpose();
     let core: CoreSummary;
     try {
       core = await getCore();
@@ -39,4 +49,6 @@ export function createHandler(getCore: () => Promise<CoreSummary>): () => Promis
   };
 }
 
-export const handler = createHandler(() => fetchCoreSummary());
+// The wrapper writes one log line and one metric line for each request. A 502 from a failed call to core counts as
+// an error in the metric line. Lambda does not count it, because the function returns and does not throw.
+export const handler = instrument({ service: SERVICE }, createHandler(() => fetchCoreSummary()));
