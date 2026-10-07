@@ -171,6 +171,11 @@ The choice is **3000 ms**:
 - A real fault still fires it. The client in `lib/core-client.ts` waits 5 seconds for core, so a core that does not answer gives a duration of about 5 seconds.
 
 A unit test keeps the value above 2074 ms and at or below a third of the timeout.
+**After the tracing change (512 MB, OpenTelemetry).** The lab deployed the four services to its own account `lab-dev` on 2026-10-07 and loaded the web page.
+The first request of catalogue after a deployment (the whole chain cold) took 1.2 to 1.3 s. A warm request took 124 ms (median). Core took 0.45 to 0.47 s for its first request.
+The value 3000 ms stays. It is above the first request, so a cold start does not fire the alarm. A core that hangs makes this function wait 5 s (the limit of its call to core), so a real fault fires it.
+The core README has the full table for 128, 256, 512 and 1024 MB.
+
 Change the value when the lab has more traffic. Look at the graph "Duration of the alias live" on the dashboard.
 
 ### The first release makes the alias
@@ -205,7 +210,7 @@ The client span is a child of the server span. The server span is a child of the
 
 The function signs the request to core first. Then `tracing.fetch` adds the header `traceparent` to the signed headers.
 The signature lists only `host` and the `x-amz-*` headers. So the extra header does not break the signature, and API Gateway accepts the request.
-The service does not use the header `X-Amzn-Trace-Id`, because API Gateway replaces it with a new value.
+The service does not use the header `X-Amzn-Trace-Id`. API Gateway adds a part of its own to that header, and Lambda ignores it for its own trace. The core README shows the test.
 
 Unit tests in `test/core-client.test.ts` check four facts:
 
