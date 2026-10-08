@@ -1,0 +1,21 @@
+name: diff test
+
+# A test of the branch feat/diff-workflow of lab-workflows against the baseline in the dev account.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  diff:
+    uses: jross24/lab-workflows/.github/workflows/diff.yml@feat/diff-workflow
+    with:
+      stage: Production
+      account-secret: PR_ACCOUNT_ID_DEV
+      title: cdk diff against the dev account (test)
+      key: dev-test
+      tools-ref: feat/diff-workflow
+    secrets: inherit
