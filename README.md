@@ -136,7 +136,22 @@ If core is down during a release, the new version also counts errors, and the re
 A unit test proves the metric part with the real handler and a fake core. The fake core answers `403`, `500`, a bad body, or a network failure.
 In each case the handler returns 502 and does not throw. The log line has the level `ERROR`, and the metric line has `errors` = 1.
 
-The tests are in `test/products-handler.test.ts`. The lab has not yet run this case in AWS.
+The tests are in `test/products-handler.test.ts`.
+
+**What the lab saw in lab-dev.** The lab ran this case in its own account `lab-dev` on 2026-10-08, with this code.
+The `Dev` stage got the canary configuration and a wrong path in `CORE_URL`, for this test only. The test did not change `main`.
+So core did not answer 200 to any call of the new version, and the function answered 502 without a throw. A loop sent a request to `GET /products` every 2 seconds. The times are UTC.
+
+| Time | What happened |
+| --- | --- |
+| 00:21:11 | The deployment started, with the configuration `CodeDeployDefault.LambdaCanary10Percent5Minutes`. |
+| 00:21:24 | The first call of the new version answered 502. |
+| 00:22:52 | CodeDeploy stopped the deployment: state `Stopped`, error code `ALARM_ACTIVE`. The message of `cdk deploy` named `ServiceErrorsAlarm`. |
+| 00:22:53 to 00:22:55 | CodeDeploy ran the rollback deployment with `CodeDeployDefault.LambdaAllAtOnce`. It was `Succeeded`. |
+| after | The stack was `UPDATE_ROLLBACK_COMPLETE`, and `cdk deploy` failed. |
+
+`ErrorsAlarm` stayed in the state `OK` the whole time, because Lambda counted no error. Only `ServiceErrorsAlarm` saw the failure. Of 245 calls, 4 answered 502.
+The rollback was complete 101 seconds after the start.
 
 ### Where the latency threshold comes from
 
@@ -258,10 +273,10 @@ The method is in the core README, section [The Production drill](https://github.
 5. Clean up with a second pull request that sets both values back. Give it the title `fix: remove the drill fault`.
 
 A dry run with exactly these two edits passed lint, typecheck, all the tests and `cdk synth`. `INJECT_FAULT` appeared only in the Production template.
-The lab has not run the drill itself.
+The lab did not run this drill in Production: the owner runs it. It ran the 502 case in its own account (see "What an error means here").
 
 With only the edit in `lib/stages.ts`, the guard test fails, as it should. The switch makes the function throw, so the drill tests `ErrorsAlarm` and not `ServiceErrorsAlarm`.
-The unit tests in "What an error means here" cover the metric part of the third alarm.
+The unit tests in "What an error means here" and the run in `lab-dev` cover the third alarm.
 
 ## How a change reaches Production
 
