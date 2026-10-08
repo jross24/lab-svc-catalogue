@@ -1,5 +1,6 @@
 import { App } from 'aws-cdk-lib';
 import { CatalogueStage } from './catalogue-stage.ts';
+import { parseNamespace } from './namespace.ts';
 import { DEV_STAGE, STAGES } from './stages.ts';
 
 const DEFAULT_VERSION = '0.0.0-dev';
@@ -23,14 +24,26 @@ function readDev(app: App): boolean {
   throw new Error(`Context value dev must be true or false. Got ${JSON.stringify(dev)}. Example: -c dev=true`);
 }
 
-// Context values: version (default 0.0.0-dev) and dev (default false).
+function readNamespace(app: App, dev: boolean): string | undefined {
+  const namespace: unknown = app.node.tryGetContext('namespace');
+  if (namespace === undefined) return undefined;
+  // A pipeline stage has fixed names. A namespace there would be an error that nobody sees, so refuse it.
+  if (!dev) {
+    throw new Error('Context value namespace works only with dev=true. Example: -c dev=true -c namespace=my-test');
+  }
+  return parseNamespace(namespace);
+}
+
+// Context values: version (default 0.0.0-dev), dev (default false) and namespace (default none, only with dev=true).
 export function createApp(context?: Record<string, unknown>): App {
   const app = new App({ context });
   const version = readVersion(app);
+  const dev = readDev(app);
+  const namespace = readNamespace(app, dev);
 
-  if (readDev(app)) {
+  if (dev) {
     // Only the Dev stage, so a laptop cannot deploy a pipeline stage by accident.
-    new CatalogueStage(app, 'Dev', { version, config: DEV_STAGE });
+    new CatalogueStage(app, 'Dev', { version, config: DEV_STAGE, namespace });
     return app;
   }
 

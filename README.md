@@ -65,6 +65,9 @@ The stack also writes its own address for the web application of a later phase.
 | --- | --- |
 | `/lab/catalogue/url` | The base URL of this API. Add `/products` to call the route. |
 
+A `Dev` copy with a namespace writes `/lab/ns/<ns>/catalogue/url` and not this parameter. It reads the same two core parameters as the other copies.
+See "Namespaces".
+
 ## Deployment order: core first
 
 Deploy core to an account before you deploy this service to that account.
@@ -327,12 +330,101 @@ npx cdk destroy -c dev=true "Dev/*" --profile <your-dev-profile>
 The deployment-order rule applies here too. Deploy the `Dev` stage of lab-svc-core to the account first.
 The `Dev` stage has the alias, the deployment group, the alarms and the dashboard too. It releases all at once.
 
+With no other context value, the `Dev` stage is the **baseline copy** of the account. It uses the fixed names of the table below.
+The web application of the account reads `/lab/catalogue/url`, so the baseline copy is the copy that it calls.
+An account holds one baseline copy, and it stays deployed. To run a second copy, use a namespace.
+
+### Namespaces
+
+A namespace gives a copy of the `Dev` stage names of its own. So a second copy can live in the same account and not touch the baseline copy.
+Use it for a copy on your laptop. The pipeline uses it for the preview of a pull request.
+
+```
+npx cdk deploy -c dev=true -c namespace=my-test -c version=0.0.0-my-test "Dev/*" --profile <your-dev-profile>
+npx cdk destroy -c dev=true -c namespace=my-test "Dev/*" --profile <your-dev-profile>
+```
+
+The rules for the context value `namespace`:
+
+- It is valid only together with `dev=true`. With `dev` off, the app stops with an error.
+- It has 1 to 20 characters. The first character is a letter from `a` to `z`.
+- The other characters are the letters `a` to `z`, the digits `0` to `9` and `-`. The last character is not `-`.
+- The app stops with an error for any other value. The message shows the value and an example.
+- The pipeline stages never read it.
+
+The names that the namespace changes:
+
+| | No namespace (baseline copy) | Namespace `<ns>` | Example, namespace `pr-12` |
+| --- | --- | --- | --- |
+| Stack name | `lab-svc-catalogue` | `lab-svc-catalogue-<ns>` | `lab-svc-catalogue-pr-12` |
+| SSM parameter with the URL | `/lab/catalogue/url` | `/lab/ns/<ns>/catalogue/url` | `/lab/ns/pr-12/catalogue/url` |
+| Dashboard name | `lab-svc-catalogue` | `lab-svc-catalogue-<ns>` | `lab-svc-catalogue-pr-12` |
+| Tag on the stack and its resources | none | `lab-namespace=<ns>` | `lab-namespace=pr-12` |
+
+Nothing else of the stack has a fixed name. CloudFormation builds the other names from the stack name, so they are unique too.
+This holds for the function, the log group, the role, the alarms and the CodeDeploy application.
+The alias `live` belongs to one function, so it is the same in each copy. The stack has no output with an export name.
+A unit test compares all Name-like properties of two namespaces. It fails when a new fixed name appears.
+
+The code is in `lib/namespace.ts`. It does not change the nine shared files.
+The shared dashboard code always names the dashboard `lab-svc-catalogue`. So the stack sets the new name on the `CfnDashboard` with `addPropertyOverride`.
+The property `dashboardName` of the construct keeps the old value. Nothing reads it.
+
+**The reserved prefix.** The namespace `pr-<number>`, for example `pr-12`, belongs to the pipeline.
+The pipeline deploys the preview of a pull request under that name and deletes it when the pull request closes.
+Do not use a name that starts with `pr-` on a laptop.
+
+**How a laptop copy and a preview live together.** Each copy has its own stack, URL parameter and dashboard.
+So the baseline copy, the laptop copy `my-test` and the preview `pr-12` can run together in one account.
+`cdk destroy` of a namespace deletes only the stack with that namespace in its name.
+
+**Core.** A copy with a namespace still reads `/lab/core/url` and `/lab/core/api-arn`. So it calls the baseline copy of core.
+Deploy the baseline copy of core first. A preview of this service finds core in the long-lived baseline of the account.
+Core has no namespace yet. When it has one, a context value `coreNamespace` can point this service at a preview of core. This service does not have that value yet.
+
+**The version.** Give each copy its own `version`. The version is a dimension of the metrics `requests` and `errors`.
+`ServiceErrorsAlarm` reads the dimension. Two copies with the same version share their metric lines. So the alarm of one copy can fire on the errors of the other.
+The pipeline uses a version such as `0.0.0-pr12.abc1234`. The default `0.0.0-dev` belongs to the baseline copy.
+
+**The dashboard.** The graphs "Requests by version" and "Errors that the service counted, by version" search by the service name.
+They show the versions of all copies of the service in the account. Look for the line of your own version.
+
+**What the pipeline runs.** The synth and the deployment use the same commands as for a release. The assembly holds only the stage `Dev`.
+
+```
+npx cdk synth -c dev=true -c namespace=pr-12 -c version=0.0.0-pr12.abc1234
+npx cdk deploy --app cdk.out "Dev/*" --require-approval never
+npx cdk destroy --app cdk.out "Dev/*" --force
+```
+
+### How another service adopts the namespace
+
+Use this list for core, account and web. [lab-platform#36](https://github.com/jross24/lab-platform/issues/36) tracks the work.
+The files `lib/namespace.ts` and `test/namespace.test.ts` in this repository are the model.
+
+1. Copy `lib/namespace.ts`. Change the three names in `namesFor` to the names of the service. Keep `parseNamespace` as it is, so all services accept the same values.
+2. In `lib/app.ts`, read the context value `namespace`. Throw when `dev` is off. Call `parseNamespace`. Pass the value to the `Dev` stage and to the stack as an optional property.
+3. In the stack, take the stack name from `namesFor`. With no namespace the name must not change.
+4. Rename every SSM parameter that the stack writes to `/lab/ns/<ns>/<service>/<name>`. Core writes two, `url` and `api-arn`.
+5. Set the dashboard name. The shared dashboard code fixes it, so use `addPropertyOverride('DashboardName', ...)` on the `CfnDashboard`, and only when there is a namespace.
+6. Add the tag with `Tags.of(stack).add('lab-namespace', namespace)`, only when there is a namespace.
+7. Search the stack for any other fixed name: `functionName`, `logGroupName`, `roleName`, `alarmName`, `exportName`, and the names of buckets and tables. Remove it or add the namespace.
+8. Core only: do not create CloudWatch Transaction Search in a copy with a namespace. It is a setting of the whole account.
+9. Copy `test/namespace.test.ts` and change the names. Keep the test that proves that the stages and the `Dev` stage with no namespace do not change.
+10. Update the README of the service in the same pull request.
+
+**The consumer and provider rule.** A copy writes its parameters only under its own path `/lab/ns/<ns>/`.
+A copy reads the baseline path of its provider by default, for example `/lab/core/url`.
+A copy reads the path of a provider preview only when a context value names it, for example `coreNamespace`. The provider must adopt the namespace first.
+A copy never writes a baseline parameter, and it never reads the parameter of another copy by chance.
+
 ## Layout
 
 | Path | Content |
 | --- | --- |
 | `bin/app.ts` | The entry point that `cdk.json` names. |
-| `lib/app.ts` | Reads the context values and makes the stages. |
+| `lib/app.ts` | Reads the context values (`version`, `dev` and `namespace`) and makes the stages. |
+| `lib/namespace.ts` | Checks the context value `namespace` and makes the names of a copy: stack, URL parameter and dashboard. |
 | `lib/stages.ts` | The typed settings of each stage: log retention, the release type and the fault switch. |
 | `lib/catalogue-stage.ts` | The CDK stage. |
 | `lib/catalogue-stack.ts` | The stack: SSM lookups, function, alias and release, IAM policy, API, dashboard, SSM parameter, outputs. |
