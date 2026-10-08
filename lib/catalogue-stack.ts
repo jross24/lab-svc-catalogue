@@ -64,7 +64,7 @@ export class CatalogueStack extends Stack {
         CORE_URL: coreUrl,
         ...(props.config.injectFault ? { INJECT_FAULT: 'true' } : {}),
       },
-      logGroup: new LogGroup(this, 'ProductsFunctionLogs', {
+      logGroup: new LogGroup(this, 'ProductsFunctionLogs2', {
         retention: props.config.logRetentionDays,
         removalPolicy: RemovalPolicy.DESTROY,
       }),
