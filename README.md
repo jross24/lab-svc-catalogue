@@ -122,9 +122,7 @@ This section shows what is the same, what is different, and the numbers that bel
 - One JSON log line and one metric line (embedded metric format) for each request, with the service name `catalogue`. One dashboard, `lab-svc-catalogue`.
 - Tracing with OpenTelemetry. The function sends its spans to the OTLP endpoint of X-Ray. Lambda active tracing is off. See "Tracing".
 - The fault switch `injectFault` and the drill. The log retention of each stage.
-- Nine shared files, copied from core with no change: `lib/gradual-release.ts`, `lib/service-dashboard.ts`, `lib/instrument.ts`, `lib/logger.ts`, `lib/metrics.ts`,
-  `lib/tracing.ts`, `lib/xray-exporter.ts`, `lib/sigv4.ts` and `lib/function-defaults.ts`.
-  Four test files are also the same as in core: `test/tracing.test.ts`, `test/xray-exporter.test.ts`, `test/sigv4.test.ts` and `test/function-defaults.test.ts`.
+- The shared files are pinned copies of `shared/` in lab-workflows: 9 files in `lib/`, 7 tests and `test/support/contract-schema.ts`. `shared.lock.json` names the commit, and the job `shared` of the pull request check fails when a copy is not byte-equal to that commit. To change a shared file, change it in lab-workflows, then run `node actions/shared-files/sync.mjs <path to this repository>` in a clone of lab-workflows (see the section "Shared files" of its README).
 
 ### What is different from core
 
@@ -550,13 +548,13 @@ A copy never writes a baseline parameter, and it never reads the parameter of an
 | `lib/stages.ts` | The typed settings of each stage: log retention, the release type, the fault switch and the flag override. |
 | `lib/catalogue-stage.ts` | The CDK stage. |
 | `lib/catalogue-stack.ts` | The stack: SSM lookups, function, alias and release, IAM policy, API, dashboard, SSM parameters, outputs. |
-| `lib/gradual-release.ts` | The alias, the deployment group, the three alarms and the `Release` type. The same file as in lab-svc-core. |
-| `lib/service-dashboard.ts` | The dashboard of a stage. The same file as in lab-svc-core. |
-| `lib/instrument.ts`, `lib/logger.ts`, `lib/metrics.ts` | The wrapper of the handler (it makes the server span), the log line and the metric line. The same files as in lab-svc-core, except that `instrument.ts` and `logger.ts` also write the fields `flags`, `flagsSource` and `flagsOverridden`. |
-| `lib/tracing.ts` | The OpenTelemetry tracing: the server span, the client span and the header `traceparent`. The same file as in lab-svc-core. |
-| `lib/xray-exporter.ts` | Sends the spans to the OTLP endpoint of X-Ray. The same file as in lab-svc-core. |
-| `lib/sigv4.ts` | Signs the export of the spans with AWS Signature Version 4. The same file as in lab-svc-core. |
-| `lib/function-defaults.ts` | The memory and the esbuild settings of the function. The same file as in lab-svc-core. |
+| `lib/gradual-release.ts` | The alias, the deployment group, the three alarms and the `Release` type. A shared file. |
+| `lib/service-dashboard.ts` | The dashboard of a stage. A shared file. |
+| `lib/instrument.ts`, `lib/logger.ts`, `lib/metrics.ts` | The wrapper of the handler (it makes the server span), the log line and the metric line. Shared files. They also write the optional fields `flags`, `flagsSource` and `flagsOverridden`, which the handler sets for the flag `show-discounts`. |
+| `lib/tracing.ts` | The OpenTelemetry tracing: the server span, the client span and the header `traceparent`. A shared file. |
+| `lib/xray-exporter.ts` | Sends the spans to the OTLP endpoint of X-Ray. A shared file. |
+| `lib/sigv4.ts` | Signs the export of the spans with AWS Signature Version 4. A shared file. |
+| `lib/function-defaults.ts` | The memory and the esbuild settings of the function. A shared file. |
 | `lib/products-handler.ts` | The Lambda handler, the fault switch and the flag `show-discounts`. |
 | `lib/flag-client.ts` | Reads the flags with the AppConfig data API, keeps the session token, caches for 30 seconds, and returns the default (off) on any failure. |
 | `lib/appconfig-data.ts` | The two AppConfig data calls with the AWS SDK. The SDK comes from the Lambda runtime. |
@@ -565,7 +563,8 @@ A copy never writes a baseline parameter, and it never reads the parameter of an
 | `lib/sign.ts` | Signs the call to core with AWS Signature Version 4. |
 | `contract.json` | What `GET /products` promises to the web application. `test/contract.test.ts` checks that the real handler answers as the file says. |
 | `expectations.json` | The fields of core that this service reads. `test/expectations.test.ts` checks that the client of core needs exactly these fields. |
-| `test/` | The unit tests (vitest). `tracing.test.ts`, `xray-exporter.test.ts`, `sigv4.test.ts`, `function-defaults.test.ts`, `contract-schema.test.ts` and `support/contract-schema.ts` are the same files as in lab-svc-core. |
+| `shared.lock.json` | The pin: the commit of lab-workflows that the shared files come from. |
+| `test/` | The unit tests (vitest). `tracing.test.ts`, `xray-exporter.test.ts`, `sigv4.test.ts`, `function-defaults.test.ts`, `contract-schema.test.ts` and `support/contract-schema.ts` are shared files. |
 | `.github/workflows/` | Four small files that call the workflows in lab-workflows: `pr.yml`, `preview.yml`, `redeploy.yml` and `release.yml`. |
 
 ## Release gate
