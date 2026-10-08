@@ -1,7 +1,7 @@
 # lab-svc-catalogue
 
 This repository holds the mock "catalogue" service of the pipeline lab.
-It is an AWS CDK app in TypeScript. The pipeline in [lab-workflows](https://github.com/jross24/lab-workflows) releases it.
+It is an AWS CDK app in TypeScript. The pipeline in [lab-workflows](https://github.com/jross24/lab-workflows) releases it. (Test line for the preview proof. Do not merge.)
 
 The service has the same shape as [lab-svc-core](https://github.com/jross24/lab-svc-core), and it uses the same release and observability pattern.
 This README explains what is different. The lab-svc-core README explains the shared mechanics in more detail:
