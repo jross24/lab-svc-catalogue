@@ -57,10 +57,12 @@ describe('the flag show-discounts', () => {
   }
 
   it('leaves the answer exactly as before when the flag is off', async () => {
+    // The release job sets VERSION in its environment, so the test sets it too.
+    vi.stubEnv('VERSION', '1.2.3');
     const response = await createHandler(coreAnswers, flagsOff)();
     expect(JSON.parse(response.body)).toEqual({
       service: 'catalogue',
-      version: 'unknown',
+      version: '1.2.3',
       core: { version: '0.3.0', itemCount: 3 },
       products: PRODUCTS_WITHOUT_DISCOUNT,
     });
