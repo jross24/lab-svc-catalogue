@@ -69,15 +69,17 @@ The stack also writes its own address for the web application of a later phase. 
 A `Dev` copy with a namespace writes `/lab/ns/<ns>/catalogue/url` and `/lab/ns/<ns>/catalogue/version`. It does not write the two parameters above. It reads the same two core parameters as the other copies.
 See "Namespaces".
 
-## Deployment order: core first
+## Deployment order: core and lab-flags first
 
-Deploy core to an account before you deploy this service to that account.
+Deploy core and lab-flags to an account before you deploy this service to that account.
 
 CloudFormation reads `/lab/core/url` and `/lab/core/api-arn` when it deploys this stack.
 If core is not in the account, the parameters do not exist, and the deployment fails before it creates a resource.
-The file `pipeline.json` names the services that this service needs: `core >=0.5.0`.
-Before each deploy job changes an environment, the pipeline reads `/lab/core/version` in that environment.
-It stops the job with a clear message if core is not there, or if its version is outside the range. The job fails before CloudFormation starts, so it changes nothing.
+CloudFormation also reads `/lab/flags/application-id`, `/lab/flags/environment-id` and `/lab/flags/profile-id` when it deploys this stack.
+A `Dev` copy reads the same three parameters, so its account needs the baseline copy of lab-flags.
+The file `pipeline.json` names the services that this service needs: `core >=0.5.0` and `flags >=0.1.0`.
+Before each deploy job changes an environment, the pipeline reads `/lab/core/version` and `/lab/flags/version` in that environment.
+It stops the job with a clear message if one of them is not there, or if its version is outside the range. The job fails before CloudFormation starts, so it changes nothing.
 The pipeline also compares the set of versions that passed in Test with the environment. This service has no range for web and account, so an environment must run at
 least the versions that the E2E suite tested. The README of [lab-workflows](https://github.com/jross24/lab-workflows) explains both checks.
 
@@ -94,10 +96,12 @@ Each stage holds one stack, `lab-svc-catalogue`. The file `lib/stages.ts` holds 
 | `logRetentionDays` | 7 | 7 | 30 |
 | `release` | all at once | all at once | canary: 10 percent, then 100 percent after 5 minutes |
 | `injectFault` | false | false | false |
+| `allowFlagOverride` | true | false | false |
 
 Every stage has the same resources: the same alias, the same CodeDeploy deployment group, the same three alarms and the same dashboard.
 Only the values in the table differ. A unit test compares the three templates to check this.
 `injectFault` is a device for the release drill. See "The Production drill". No stage sets it in `main`.
+`allowFlagOverride` lets a request header override a feature flag. Only Test and Dev allow it. See "Feature flags".
 
 The code names no AWS account and no region. A stack goes to the account of the credentials that deploy it.
 All three stages use the same bundled Lambda code.
@@ -269,6 +273,72 @@ aws xray batch-get-traces --trace-ids <traceId> --profile <read-only-profile>
 ```
 
 The log line and the spans carry the same trace ID. A trace that starts in the web application also holds the spans of web and core.
+
+## Feature flags
+
+The flag `show-discounts` decides whether `GET /products` shows a discount.
+The flag lives in [lab-flags](https://github.com/jross24/lab-flags). It is off in every stage.
+
+When the flag is on, each product has one more field, `discount`. The value is a mock: 10, which means 10 percent.
+When the flag is off, the answer is the same as before the flag existed. The field `discount` is optional in `contract.json`, so adding it is an additive change.
+
+### How the service reads the flags
+
+The stack reads three SSM parameters of lab-flags at deployment: `/lab/flags/application-id`, `/lab/flags/environment-id` and `/lab/flags/profile-id`.
+It passes them to the function as the environment variables `FLAGS_APPLICATION_ID`, `FLAGS_ENVIRONMENT_ID` and `FLAGS_PROFILE_ID`.
+The role of the function may call only `appconfig:StartConfigurationSession` and `appconfig:GetLatestConfiguration`, and only on that one configuration.
+
+The file `lib/flag-client.ts` reads the flags with the AppConfig data API:
+
+1. It starts a session with `StartConfigurationSession` and keeps the session token.
+2. It calls `GetLatestConfiguration` with the token. AppConfig answers with the flags, for example `{"show-discounts":{"enabled":false}}`, and a new token.
+3. When nothing changed since the last call, AppConfig sends no content. The client then keeps the flags that it has.
+
+The client keeps the flags in memory for 30 seconds. A Lambda environment calls AppConfig at most once in 30 seconds, and a flag change reaches a request in about that time.
+The read starts at the same time as the call to core, so it adds little time to a request.
+
+The AWS SDK client comes with the Node.js 22 runtime of Lambda. The construct `NodejsFunction` marks `@aws-sdk/*` as external, so esbuild does not put it in the bundle.
+The package `@aws-sdk/client-appconfigdata` is a dev dependency of this repository. It gives the types and lets the unit tests load the module. The function loads the SDK at its first flag read.
+
+### The safe default: off
+
+A flag service outage must never fail a request. Any failure to read gives the default value, and the default is off.
+A failure is, for example, a missing permission, a timeout (the limit is 2 seconds), content that is not JSON, or a missing environment variable.
+
+After a failure the client does the following:
+
+- It writes one warning line, for example `{"level":"WARN","event":"flag-read-failed","error":"..."}`.
+- It returns the default for every flag. A flag that was on goes back to off, because the service cannot know its value.
+- It starts a new session at the next read, and it makes no call for 10 seconds, so a request does not wait for a timeout each time.
+
+An unknown flag is also off. A flag that the content lists with no boolean `enabled` is also off.
+
+The log line of each request shows what the request used:
+
+| Field | Meaning |
+| --- | --- |
+| `flags` | The effective value of each flag, for example `{"show-discounts":false}`. |
+| `flagsSource` | `appconfig` when the values came from AppConfig. `default` when the read failed. |
+| `flagsOverridden` | `true` when the request header set the flag for this request. |
+
+### The override header: Test only
+
+A test needs both states of the flag, and the flag is off everywhere. So a stage can allow a request header that overrides the flag for that one request.
+The stage setting `allowFlagOverride` controls it. The value is `true` for Test and Dev, and `false` for Staging and Production.
+
+Where the setting is `true`, the stack sets the environment variable `ALLOW_FLAG_OVERRIDE`. The header `x-lab-flags` then sets the flag:
+
+```bash
+curl -s -H 'x-lab-flags: show-discounts=on' "$TEST_URL/products"    # the products have a discount
+curl -s -H 'x-lab-flags: show-discounts=off' "$TEST_URL/products"   # the products have no discount
+```
+
+- A header with several flags uses commas: `a=on,b=off`. The service reads only `show-discounts`.
+- A part that is malformed is ignored, and the flag keeps its value. Examples are `show-discounts`, `show-discounts=yes` and `show-discounts==on`.
+- Where the setting is `false`, the stack does not set `ALLOW_FLAG_OVERRIDE`, and the handler ignores the header. Production answers the same with and without the header.
+- The header changes one request only. The next request without the header uses the flag from AppConfig.
+
+Unit tests check both cases, and a synth test checks that only the Test template has `ALLOW_FLAG_OVERRIDE`.
 
 ## The Production drill
 
@@ -455,17 +525,20 @@ A copy never writes a baseline parameter, and it never reads the parameter of an
 | `bin/app.ts` | The entry point that `cdk.json` names. |
 | `lib/app.ts` | Reads the context values (`version`, `dev` and `namespace`) and makes the stages. |
 | `lib/namespace.ts` | Checks the context value `namespace` and makes the names of a copy: stack, URL parameter, version parameter and dashboard. |
-| `lib/stages.ts` | The typed settings of each stage: log retention, the release type and the fault switch. |
+| `lib/stages.ts` | The typed settings of each stage: log retention, the release type, the fault switch and the flag override. |
 | `lib/catalogue-stage.ts` | The CDK stage. |
 | `lib/catalogue-stack.ts` | The stack: SSM lookups, function, alias and release, IAM policy, API, dashboard, SSM parameters, outputs. |
 | `lib/gradual-release.ts` | The alias, the deployment group, the three alarms and the `Release` type. The same file as in lab-svc-core. |
 | `lib/service-dashboard.ts` | The dashboard of a stage. The same file as in lab-svc-core. |
-| `lib/instrument.ts`, `lib/logger.ts`, `lib/metrics.ts` | The wrapper of the handler (it makes the server span), the log line and the metric line. The same files as in lab-svc-core. |
+| `lib/instrument.ts`, `lib/logger.ts`, `lib/metrics.ts` | The wrapper of the handler (it makes the server span), the log line and the metric line. The same files as in lab-svc-core, except that `instrument.ts` and `logger.ts` also write the fields `flags`, `flagsSource` and `flagsOverridden`. |
 | `lib/tracing.ts` | The OpenTelemetry tracing: the server span, the client span and the header `traceparent`. The same file as in lab-svc-core. |
 | `lib/xray-exporter.ts` | Sends the spans to the OTLP endpoint of X-Ray. The same file as in lab-svc-core. |
 | `lib/sigv4.ts` | Signs the export of the spans with AWS Signature Version 4. The same file as in lab-svc-core. |
 | `lib/function-defaults.ts` | The memory and the esbuild settings of the function. The same file as in lab-svc-core. |
-| `lib/products-handler.ts` | The Lambda handler and the fault switch. |
+| `lib/products-handler.ts` | The Lambda handler, the fault switch and the flag `show-discounts`. |
+| `lib/flag-client.ts` | Reads the flags with the AppConfig data API, keeps the session token, caches for 30 seconds, and returns the default (off) on any failure. |
+| `lib/appconfig-data.ts` | The two AppConfig data calls with the AWS SDK. The SDK comes from the Lambda runtime. |
+| `lib/flag-override.ts` | Reads the header `x-lab-flags`. |
 | `lib/core-client.ts` | Calls `GET /items` of core as a client span, and checks the answer. |
 | `lib/sign.ts` | Signs the call to core with AWS Signature Version 4. |
 | `contract.json` | What `GET /products` promises to the web application. `test/contract.test.ts` checks that the real handler answers as the file says. |

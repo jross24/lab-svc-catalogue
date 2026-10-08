@@ -187,7 +187,7 @@ describe('the app with dev=true and a namespace', () => {
     expect(onlyProperty(stack, 'AWS::Lambda::Function', 'Tags')).toContainEqual({ Key: 'lab-namespace', Value: 'pr-12' });
   });
 
-  it('still reads core from the baseline parameters /lab/core/url and /lab/core/api-arn', () => {
+  it('still reads core and the flags from the baseline parameters of the account', () => {
     const defaults = Object.values(
       Template.fromJSON(template as unknown as Record<string, unknown>).findParameters('*', {
         Type: 'AWS::SSM::Parameter::Value<String>',
@@ -196,7 +196,13 @@ describe('the app with dev=true and a namespace', () => {
       .map((parameter) => (parameter as { Default: string }).Default)
       // The bootstrap version is a parameter too. It is not an SSM parameter of the lab.
       .filter((name) => name.startsWith('/lab/'));
-    expect(defaults.sort()).toEqual(['/lab/core/api-arn', '/lab/core/url']);
+    expect(defaults.sort()).toEqual([
+      '/lab/core/api-arn',
+      '/lab/core/url',
+      '/lab/flags/application-id',
+      '/lab/flags/environment-id',
+      '/lab/flags/profile-id',
+    ]);
   });
 
   it('accepts the version of a pull request and uses it for the metric dimension and the output', () => {
@@ -296,7 +302,7 @@ describe('an invalid namespace', () => {
       () =>
         new CatalogueStack(new App(), 'Catalogue', {
           version: '1.2.3',
-          config: { logRetentionDays: RetentionDays.ONE_WEEK, release: { kind: 'allAtOnce' }, injectFault: false },
+          config: { logRetentionDays: RetentionDays.ONE_WEEK, release: { kind: 'allAtOnce' }, injectFault: false, allowFlagOverride: false },
           namespace: 'Bad-Name',
         }),
     ).toThrow(/namespace must be 1 to 20 characters/);

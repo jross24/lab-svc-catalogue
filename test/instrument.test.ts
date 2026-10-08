@@ -136,6 +136,23 @@ describe('instrument', () => {
     expect(parse(lines[1])).toMatchObject({ requests: 1, errors: 1 });
   });
 
+  it('writes the flags that the handler reports into the log line, and nothing when it reports none', async () => {
+    const { lines, wrap } = setup();
+    await wrap(async (_event, _context, signals) => {
+      signals.flags = { 'show-discounts': true };
+      signals.flagsSource = 'appconfig';
+      signals.flagsOverridden = true;
+      return { statusCode: 200 };
+    })(EVENT, CONTEXT);
+    await wrap(() => Promise.resolve({ statusCode: 200 }))(EVENT, CONTEXT);
+    expect(parse(lines[0])).toMatchObject({
+      flags: { 'show-discounts': true },
+      flagsSource: 'appconfig',
+      flagsOverridden: true,
+    });
+    expect(parse(lines[2])).not.toHaveProperty('flags');
+  });
+
   it('gives each call a fresh signals object, so one degraded call does not mark the next call', async () => {
     const { lines, wrap } = setup();
     let first = true;

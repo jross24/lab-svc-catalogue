@@ -145,6 +145,13 @@ describe('the stage config', () => {
     expect(DEV_STAGE.release).toEqual({ kind: 'allAtOnce' });
   });
 
+  it('allows the flag override header in Test and Dev, and not in Staging or Production', () => {
+    expect(STAGES.Test.allowFlagOverride).toBe(true);
+    expect(DEV_STAGE.allowFlagOverride).toBe(true);
+    expect(STAGES.Staging.allowFlagOverride).toBe(false);
+    expect(STAGES.Production.allowFlagOverride).toBe(false);
+  });
+
   it('injects a fault only in the stages that the list DRILL_STAGES names', () => {
     // The fault switch is a device for the release drill. A fault in the main branch is a mistake.
     // So a stage must be in the list and must set injectFault. One of the two alone fails this test.
@@ -174,16 +181,31 @@ describe('the deployment configuration of each stage', () => {
     expect(groupOf('Production').Properties.DeploymentConfigName).toBe('CodeDeployDefault.LambdaCanary10Percent5Minutes');
   });
 
+  it('puts the flag override into the function of Test, and into no function of Staging or Production', () => {
+    const overrideOf = (stage: string): unknown => {
+      const stack = assembly.stacksRecursively.find((candidate) => candidate.hierarchicalId === `${stage}/Catalogue`);
+      const functions = Object.values(stack ? templateOf(stack).Resources : {}).filter(
+        (resource) => resource.Type === 'AWS::Lambda::Function',
+      );
+      expect(functions).toHaveLength(1);
+      return (functions[0] as unknown as { Properties: { Environment: { Variables: Record<string, unknown> } } }).Properties
+        .Environment.Variables['ALLOW_FLAG_OVERRIDE'];
+    };
+    expect(overrideOf('Test')).toBe('true');
+    expect(overrideOf('Staging')).toBeUndefined();
+    expect(overrideOf('Production')).toBeUndefined();
+  });
+
   it('is the only difference between the templates of the stages, apart from the stage config', () => {
     // Test must exercise the resources that Production runs. So the stages must differ only in the stage config:
-    // the log retention, the deployment configuration, and the fault switch of the drill with the id of the
-    // Lambda version that the switch changes.
+    // the log retention, the deployment configuration, the fault switch of the drill, and the override of the flags
+    // (allowed in Test only), with the id of the Lambda version that these environment variables change.
     const normalised = (stage: string): string => {
       const stack = assembly.stacksRecursively.find((candidate) => candidate.hierarchicalId === `${stage}/Catalogue`);
       return JSON.stringify(stack?.template)
         .replace(/"RetentionInDays":[0-9]+/g, '"RetentionInDays":0')
         .replace(/CodeDeployDefault\.Lambda[A-Za-z0-9]+/g, 'CodeDeployDefault.Lambda')
-        .replace(/"INJECT_FAULT":"true",/g, '')
+        .replace(/"(INJECT_FAULT|ALLOW_FLAG_OVERRIDE)":"true",/g, '')
         .replace(/CurrentVersion[0-9A-F]{8}[0-9a-f]{32}/g, 'CurrentVersion');
     };
     expect(normalised('Staging')).toBe(normalised('Test'));

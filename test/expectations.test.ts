@@ -54,7 +54,9 @@ describe('expectations.json', () => {
   });
 
   it('expects only the providers that pipeline.json requires', () => {
-    expect(Object.keys(expectations.expects).sort()).toEqual(Object.keys(pipeline.requires).sort());
+    // lab-flags is a required service with no HTTP API and no contract.json. Nothing calls it, so nothing is expected from it.
+    const providersWithApi = Object.keys(pipeline.requires).filter((name) => name !== 'flags');
+    expect(Object.keys(expectations.expects).sort()).toEqual(providersWithApi.sort());
   });
 
   it('lists the call to GET /items of core and sends no request input', () => {

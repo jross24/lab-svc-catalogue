@@ -29,7 +29,11 @@
                 "properties": {
                   "id": { "type": "string" },
                   "name": { "type": "string" },
-                  "price": { "type": "number" }
+                  "price": { "type": "number" },
+                  "discount": {
+                    "type": "number",
+                    "description": "The discount in percent. The field is optional: it is present only when the flag show-discounts is on."
+                  }
                 }
               }
             }
