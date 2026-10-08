@@ -399,6 +399,19 @@ npx cdk deploy --app cdk.out "Dev/*" --require-approval never
 npx cdk destroy --app cdk.out "Dev/*" --force
 ```
 
+### The preview of a pull request
+
+A pull request with the label `preview` gets its own copy of this service in the developer account.
+The workflow `.github/workflows/preview.yml` calls the shared workflow of lab-workflows. It deploys the `Dev` stage under the namespace `pr-<number>`, for example `pr-12`.
+
+- A comment on the pull request shows the URL. Call `GET <URL>/products`. The answer has the version of the pull request, `0.0.0-pr12.<commit>`, and the data of core.
+- A push to the pull request deploys the new commit to the same URL.
+- The copy reads core from the baseline copy of the account, because core has no namespace yet.
+- When the pull request closes, or when you remove the label, the workflow removes the stack. A scheduled workflow removes any copy that stays behind.
+
+The names are in the table of "Namespaces". The README of [lab-workflows](https://github.com/jross24/lab-workflows#the-temporary-environment-of-a-pull-request) explains the jobs and the security note.
+A person with write access can deploy anything to the developer account with this label. The account is the fence, see that README.
+
 ### How another service adopts the namespace
 
 Use this list for core, account and web. [lab-platform#36](https://github.com/jross24/lab-platform/issues/36) tracks the work.
