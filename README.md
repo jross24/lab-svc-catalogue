@@ -446,3 +446,5 @@ A copy never writes a baseline parameter, and it never reads the parameter of an
 ## Release gate
 
 Each release runs the end-to-end suite of [lab-e2e](https://github.com/jross24/lab-e2e) in Test before it goes to Staging.
+
+<!-- preview life cycle test -->
