@@ -53,6 +53,7 @@ The core stack writes two SSM parameters in each account where it runs.
 
 CloudFormation reads the two parameters at deployment. The CDK does not read them at synth.
 So the templates name no account, and one `cdk synth` still serves each account.
+If core gets a new value for one of them, this service keeps the old value until its next deployment. The deploy job of core warns about it and names the `redeploy` workflow of this service (see "Provider parameters" in lab-workflows).
 
 The API of core uses IAM authorisation. So the function signs each request with AWS Signature Version 4.
 It signs with the temporary credentials of its own role. The Lambda runtime puts them in environment variables.
