@@ -1,0 +1,20 @@
+{
+  "service": "catalogue",
+  "expects": {
+    "core": {
+      "GET /items": {
+        "sends": [],
+        "responses": {
+          "200": {
+            "type": "object",
+            "required": ["version", "items"],
+            "properties": {
+              "version": { "type": "string", "description": "The version of core. The service shows it in the core block of its answer." },
+              "items": { "type": "array", "description": "The service counts the items. It reads no field of an item, so it needs neither name nor title." }
+            }
+          }
+        }
+      }
+    }
+  }
+}
