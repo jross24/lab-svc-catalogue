@@ -30,6 +30,14 @@ function synthDev(context: Record<string, unknown>): CloudFormationStackArtifact
   return stackOf(createApp({ dev: 'true', ...context }).synth());
 }
 
+// The names of the SSM parameters that the stack writes, in alphabetical order.
+function ssmNames(stack: CloudFormationStackArtifact): string[] {
+  return Object.values(templateOf(stack).Resources)
+    .filter((resource) => resource.Type === 'AWS::SSM::Parameter')
+    .map((resource) => resource.Properties?.Name as string)
+    .sort();
+}
+
 function onlyProperty(stack: CloudFormationStackArtifact, type: string, property: string): unknown {
   const found = Object.values(templateOf(stack).Resources).filter((resource) => resource.Type === type);
   expect(found, type).toHaveLength(1);
@@ -114,6 +122,7 @@ describe('namesFor', () => {
     expect(namesFor()).toEqual({
       stackName: 'lab-svc-catalogue',
       urlParameterName: '/lab/catalogue/url',
+      versionParameterName: '/lab/catalogue/version',
       dashboardName: 'lab-svc-catalogue',
     });
   });
@@ -122,6 +131,7 @@ describe('namesFor', () => {
     expect(namesFor('pr-12')).toEqual({
       stackName: 'lab-svc-catalogue-pr-12',
       urlParameterName: '/lab/ns/pr-12/catalogue/url',
+      versionParameterName: '/lab/ns/pr-12/catalogue/version',
       dashboardName: 'lab-svc-catalogue-pr-12',
     });
   });
@@ -135,6 +145,7 @@ describe('namesFor', () => {
     expect(names.stackName.length).toBeLessThanOrEqual(128);
     expect(names.dashboardName.length).toBeLessThanOrEqual(255);
     expect(names.urlParameterName.length).toBeLessThanOrEqual(1011);
+    expect(names.versionParameterName.length).toBeLessThanOrEqual(1011);
   });
 });
 
@@ -152,9 +163,18 @@ describe('the app with dev=true and a namespace', () => {
     expect(stack.stackName).toBe('lab-svc-catalogue-pr-12');
   });
 
-  it('writes its URL to /lab/ns/<namespace>/catalogue/url and to no other parameter', () => {
-    expect(onlyProperty(stack, 'AWS::SSM::Parameter', 'Name')).toBe('/lab/ns/pr-12/catalogue/url');
+  it('writes its URL and its version to /lab/ns/<namespace>/catalogue/ and to no other parameter', () => {
+    expect(ssmNames(stack)).toEqual(['/lab/ns/pr-12/catalogue/url', '/lab/ns/pr-12/catalogue/version']);
     expect(JSON.stringify(template)).not.toContain('/lab/catalogue/url');
+    expect(JSON.stringify(template)).not.toContain('/lab/catalogue/version');
+  });
+
+  it('writes the version of the copy to its own version parameter', () => {
+    Template.fromJSON(template as unknown as Record<string, unknown>).hasResourceProperties('AWS::SSM::Parameter', {
+      Name: '/lab/ns/pr-12/catalogue/version',
+      Type: 'String',
+      Value: VERSION_OF_A_PREVIEW,
+    });
   });
 
   it('names the dashboard lab-svc-catalogue-<namespace>', () => {
@@ -213,7 +233,7 @@ describe('two namespaces in one account', () => {
 
   it('use different stack names, parameter names and dashboard names', () => {
     expect(first.stackName).not.toBe(second.stackName);
-    expect(onlyProperty(first, 'AWS::SSM::Parameter', 'Name')).not.toBe(onlyProperty(second, 'AWS::SSM::Parameter', 'Name'));
+    expect(ssmNames(first).filter((name) => ssmNames(second).includes(name))).toEqual([]);
     expect(onlyProperty(first, 'AWS::CloudWatch::Dashboard', 'DashboardName')).not.toBe(
       onlyProperty(second, 'AWS::CloudWatch::Dashboard', 'DashboardName'),
     );
@@ -235,13 +255,13 @@ describe('two namespaces in one account', () => {
     }
   });
 
-  it('give no resource a fixed physical name, except the parameter and the dashboard', () => {
+  it('give no resource a fixed physical name, except the two parameters and the dashboard', () => {
     // A resource with no name property gets a name from CloudFormation that holds the stack name, so it is unique.
     const named = nameEntries(first)
       .filter((entry) => !isScoped(entry))
       .map((entry) => entry.type)
       .sort();
-    expect(named).toEqual(['AWS::CloudWatch::Dashboard', 'AWS::SSM::Parameter']);
+    expect(named).toEqual(['AWS::CloudWatch::Dashboard', 'AWS::SSM::Parameter', 'AWS::SSM::Parameter']);
   });
 
   it('write the same version and the same Lambda code, so they can share one asset', () => {
@@ -254,9 +274,9 @@ describe('a laptop copy and a preview in one account', () => {
   const baseline = synthDev({});
   const preview = synthDev({ namespace: 'pr-12', version: VERSION_OF_A_PREVIEW });
 
-  it('do not share the stack name, the URL parameter or the dashboard name', () => {
+  it('do not share the stack name, the two parameters or the dashboard name', () => {
     expect(baseline.stackName).not.toBe(preview.stackName);
-    expect(onlyProperty(baseline, 'AWS::SSM::Parameter', 'Name')).not.toBe(onlyProperty(preview, 'AWS::SSM::Parameter', 'Name'));
+    expect(ssmNames(baseline).filter((name) => ssmNames(preview).includes(name))).toEqual([]);
     expect(onlyProperty(baseline, 'AWS::CloudWatch::Dashboard', 'DashboardName')).not.toBe(
       onlyProperty(preview, 'AWS::CloudWatch::Dashboard', 'DashboardName'),
     );
@@ -313,7 +333,7 @@ describe('the copies without a namespace (the baseline)', () => {
   it.each(stages)('keeps the fixed names in the stage %s', (stage, assembly) => {
     const stack = stackOfStage(assembly, stage);
     expect(stack.stackName).toBe('lab-svc-catalogue');
-    expect(onlyProperty(stack, 'AWS::SSM::Parameter', 'Name')).toBe('/lab/catalogue/url');
+    expect(ssmNames(stack)).toEqual(['/lab/catalogue/url', '/lab/catalogue/version']);
     expect(onlyProperty(stack, 'AWS::CloudWatch::Dashboard', 'DashboardName')).toBe('lab-svc-catalogue');
   });
 

@@ -59,13 +59,14 @@ It signs with the temporary credentials of its own role. The Lambda runtime puts
 The file `lib/sign.ts` does the signing with `@smithy/signature-v4` and `@aws-crypto/sha256-js`. esbuild bundles both into the function.
 After the signing, the call gets the header `traceparent`, which carries the trace on to core. See "Tracing".
 
-The stack also writes its own address for the web application of a later phase.
+The stack also writes its own address for the web application of a later phase. It writes its own version too.
 
 | Parameter | Value |
 | --- | --- |
 | `/lab/catalogue/url` | The base URL of this API. Add `/products` to call the route. |
+| `/lab/catalogue/version` | The version of catalogue that the stack runs. The release workflow of lab-workflows reads it, to check the deployment order and the set of tested versions. |
 
-A `Dev` copy with a namespace writes `/lab/ns/<ns>/catalogue/url` and not this parameter. It reads the same two core parameters as the other copies.
+A `Dev` copy with a namespace writes `/lab/ns/<ns>/catalogue/url` and `/lab/ns/<ns>/catalogue/version`. It does not write the two parameters above. It reads the same two core parameters as the other copies.
 See "Namespaces".
 
 ## Deployment order: core first
@@ -358,6 +359,7 @@ The names that the namespace changes:
 | --- | --- | --- | --- |
 | Stack name | `lab-svc-catalogue` | `lab-svc-catalogue-<ns>` | `lab-svc-catalogue-pr-12` |
 | SSM parameter with the URL | `/lab/catalogue/url` | `/lab/ns/<ns>/catalogue/url` | `/lab/ns/pr-12/catalogue/url` |
+| SSM parameter with the version | `/lab/catalogue/version` | `/lab/ns/<ns>/catalogue/version` | `/lab/ns/pr-12/catalogue/version` |
 | Dashboard name | `lab-svc-catalogue` | `lab-svc-catalogue-<ns>` | `lab-svc-catalogue-pr-12` |
 | Tag on the stack and its resources | none | `lab-namespace=<ns>` | `lab-namespace=pr-12` |
 
@@ -402,10 +404,10 @@ npx cdk destroy --app cdk.out "Dev/*" --force
 Use this list for core, account and web. [lab-platform#36](https://github.com/jross24/lab-platform/issues/36) tracks the work.
 The files `lib/namespace.ts` and `test/namespace.test.ts` in this repository are the model.
 
-1. Copy `lib/namespace.ts`. Change the three names in `namesFor` to the names of the service. Keep `parseNamespace` as it is, so all services accept the same values.
+1. Copy `lib/namespace.ts`. Change the four names in `namesFor` to the names of the service. Keep `parseNamespace` as it is, so all services accept the same values.
 2. In `lib/app.ts`, read the context value `namespace`. Throw when `dev` is off. Call `parseNamespace`. Pass the value to the `Dev` stage and to the stack as an optional property.
 3. In the stack, take the stack name from `namesFor`. With no namespace the name must not change.
-4. Rename every SSM parameter that the stack writes to `/lab/ns/<ns>/<service>/<name>`. Core writes two, `url` and `api-arn`.
+4. Rename every SSM parameter that the stack writes to `/lab/ns/<ns>/<service>/<name>`. This service writes two, `url` and `version`. Core also writes `api-arn`.
 5. Set the dashboard name. The shared dashboard code fixes it, so use `addPropertyOverride('DashboardName', ...)` on the `CfnDashboard`, and only when there is a namespace.
 6. Add the tag with `Tags.of(stack).add('lab-namespace', namespace)`, only when there is a namespace.
 7. Search the stack for any other fixed name: `functionName`, `logGroupName`, `roleName`, `alarmName`, `exportName`, and the names of buckets and tables. Remove it or add the namespace.
@@ -424,10 +426,10 @@ A copy never writes a baseline parameter, and it never reads the parameter of an
 | --- | --- |
 | `bin/app.ts` | The entry point that `cdk.json` names. |
 | `lib/app.ts` | Reads the context values (`version`, `dev` and `namespace`) and makes the stages. |
-| `lib/namespace.ts` | Checks the context value `namespace` and makes the names of a copy: stack, URL parameter and dashboard. |
+| `lib/namespace.ts` | Checks the context value `namespace` and makes the names of a copy: stack, URL parameter, version parameter and dashboard. |
 | `lib/stages.ts` | The typed settings of each stage: log retention, the release type and the fault switch. |
 | `lib/catalogue-stage.ts` | The CDK stage. |
-| `lib/catalogue-stack.ts` | The stack: SSM lookups, function, alias and release, IAM policy, API, dashboard, SSM parameter, outputs. |
+| `lib/catalogue-stack.ts` | The stack: SSM lookups, function, alias and release, IAM policy, API, dashboard, SSM parameters, outputs. |
 | `lib/gradual-release.ts` | The alias, the deployment group, the three alarms and the `Release` type. The same file as in lab-svc-core. |
 | `lib/service-dashboard.ts` | The dashboard of a stage. The same file as in lab-svc-core. |
 | `lib/instrument.ts`, `lib/logger.ts`, `lib/metrics.ts` | The wrapper of the handler (it makes the server span), the log line and the metric line. The same files as in lab-svc-core. |
