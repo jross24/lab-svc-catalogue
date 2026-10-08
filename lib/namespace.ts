@@ -23,6 +23,8 @@ export interface ServiceNames {
   readonly stackName: string;
   // The SSM parameter that holds the base URL of the API. The web application reads it.
   readonly urlParameterName: string;
+  // The SSM parameter that holds the version that the stack runs. The release workflow reads the one of the baseline copy.
+  readonly versionParameterName: string;
   readonly dashboardName: string;
 }
 
@@ -32,6 +34,7 @@ export function namesFor(namespace?: string): ServiceNames {
     return {
       stackName: 'lab-svc-catalogue',
       urlParameterName: '/lab/catalogue/url',
+      versionParameterName: '/lab/catalogue/version',
       dashboardName: 'lab-svc-catalogue',
     };
   }
@@ -39,6 +42,7 @@ export function namesFor(namespace?: string): ServiceNames {
   return {
     stackName: `lab-svc-catalogue-${valid}`,
     urlParameterName: `/lab/ns/${valid}/catalogue/url`,
+    versionParameterName: `/lab/ns/${valid}/catalogue/version`,
     dashboardName: `lab-svc-catalogue-${valid}`,
   };
 }
