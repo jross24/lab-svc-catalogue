@@ -1,0 +1,36 @@
+name: probe
+on:
+  pull_request:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  direct:
+    runs-on: ubuntu-latest
+    steps:
+      - name: show the claims (never the token)
+        run: |
+          node -e '
+            (async () => {
+              const url = process.env.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=sts.amazonaws.com";
+              const res = await fetch(url, { headers: { Authorization: "bearer " + process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
+              const { value } = await res.json();
+              const claims = JSON.parse(Buffer.from(value.split(".")[1], "base64url").toString());
+              for (const k of ["sub", "ref", "event_name", "job_workflow_ref", "job_workflow_sha", "workflow_ref", "repository", "runner_environment", "environment"]) console.log("claim " + k + " = " + claims[k]);
+            })();
+          '
+      - id: login
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.PR_ACCOUNT_ID_DEV }}:role/github-pr-diff
+          aws-region: eu-west-2
+          mask-aws-account-id: true
+          retry-max-attempts: 1
+      - run: echo "RESULT direct login outcome=${{ steps.login.outcome }}"
+  via-diff:
+    uses: jross24/lab-workflows/.github/workflows/diff.yml@probe/oidc-claims
+    secrets: inherit
+  via-other:
+    uses: jross24/lab-workflows/.github/workflows/probe-other.yml@probe/oidc-claims
+    secrets: inherit
