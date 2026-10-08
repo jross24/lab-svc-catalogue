@@ -1,7 +1,8 @@
 import { fileURLToPath } from 'node:url';
-import { CfnOutput, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
+import { CfnOutput, Duration, RemovalPolicy, Stack, Tags } from 'aws-cdk-lib';
 import { CfnIntegration, HttpApi, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import type { CfnDashboard } from 'aws-cdk-lib/aws-cloudwatch';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { CfnPermission, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
@@ -10,6 +11,7 @@ import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import type { Construct } from 'constructs';
 import { FUNCTION_BUNDLING, FUNCTION_MEMORY_MB } from './function-defaults.ts';
 import { GradualRelease } from './gradual-release.ts';
+import { NAMESPACE_TAG, namesFor } from './namespace.ts';
 import { ServiceDashboard } from './service-dashboard.ts';
 import type { StageConfig } from './stages.ts';
 
@@ -27,16 +29,25 @@ export const LATENCY_P99_THRESHOLD_MS = 3000;
 export interface CatalogueStackProps {
   readonly version: string;
   readonly config: StageConfig;
+  // Only the Dev stage sets it (the context value `namespace`). It gives the stack, the URL parameter and the
+  // dashboard names of their own, so that several copies of the service can live in one account.
+  // With no namespace the stack has the names of the baseline copy. See "Namespaces" in the README.
+  readonly namespace?: string;
 }
 
 export class CatalogueStack extends Stack {
   constructor(scope: Construct, id: string, props: CatalogueStackProps) {
+    const names = namesFor(props.namespace);
     // No env here: the stack takes the account and the region of the credentials that deploy it.
-    super(scope, id, { stackName: 'lab-svc-catalogue' });
+    super(scope, id, { stackName: names.stackName });
+
+    // The tag goes to the stack and to every resource that can have a tag. A copy with no namespace has no tag.
+    if (props.namespace !== undefined) Tags.of(this).add(NAMESPACE_TAG, props.namespace);
 
     // The core service writes these two parameters in each account.
     // CloudFormation reads them at deployment, so one synth serves each account.
     // So core must be in an account before this stack can go there.
+    // A copy with a namespace reads the same two parameters: it calls the baseline copy of core in the account.
     const coreUrl = StringParameter.valueForStringParameter(this, '/lab/core/url');
     const coreApiArn = StringParameter.valueForStringParameter(this, '/lab/core/api-arn');
 
@@ -110,11 +121,17 @@ export class CatalogueStack extends Stack {
       }
     }
 
-    new ServiceDashboard(this, 'Dashboard', { service: 'catalogue', release, api });
+    const dashboard = new ServiceDashboard(this, 'Dashboard', { service: 'catalogue', release, api });
+    if (props.namespace !== undefined) {
+      // The shared dashboard code (lib/service-dashboard.ts) always names the dashboard lab-svc-catalogue.
+      // That file is a copy of the file in core, and it stays unchanged. So a copy with a namespace sets the name
+      // in the template. The property dashboardName of the construct keeps the old name, and nothing here reads it.
+      (dashboard.dashboard.node.defaultChild as CfnDashboard).addPropertyOverride('DashboardName', names.dashboardName);
+    }
 
     // The web application reads this parameter to find the API.
     new StringParameter(this, 'UrlParameter', {
-      parameterName: '/lab/catalogue/url',
+      parameterName: names.urlParameterName,
       description: 'Base URL of the catalogue API',
       stringValue: api.apiEndpoint,
     });
