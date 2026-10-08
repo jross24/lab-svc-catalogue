@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CatalogueStack } from '../lib/catalogue-stack.ts';
 import { createHandler } from '../lib/products-handler.ts';
 import { readJsonFile, validate } from './support/contract-schema.ts';
+import { flagsOff, flagsOn } from './support/flags.ts';
 import type { Contract, Schema } from './support/contract-schema.ts';
 
 // The contract of this service is the file contract.json. The web application reads it (as a release asset), and the
@@ -35,7 +36,7 @@ function keywordProblems(schema: Schema, path: string): string[] {
 
 async function answer(): Promise<unknown> {
   vi.stubEnv('VERSION', '1.2.3');
-  const response = await createHandler(async () => ({ version: '0.9.1', itemCount: 3 }))();
+  const response = await createHandler(async () => ({ version: '0.9.1', itemCount: 3 }), flagsOff)();
   return JSON.parse(response.body);
 }
 
@@ -59,7 +60,7 @@ describe('contract.json', () => {
   it('lists exactly the routes that the stack has', { timeout: 30_000 }, () => {
     const stack = new CatalogueStack(new App({ context: { 'aws:cdk:bundling-stacks': [] } }), 'Catalogue', {
       version: '1.2.3',
-      config: { logRetentionDays: RetentionDays.ONE_WEEK, release: { kind: 'allAtOnce' }, injectFault: false },
+      config: { logRetentionDays: RetentionDays.ONE_WEEK, release: { kind: 'allAtOnce' }, injectFault: false, allowFlagOverride: false },
     });
     const routes = Object.values(Template.fromStack(stack).findResources('AWS::ApiGatewayV2::Route')).map(
       (route) => (route as { Properties: { RouteKey: string } }).Properties.RouteKey,
@@ -73,6 +74,30 @@ describe('the answer of GET /products', () => {
 
   it('has the shape of the contract', async () => {
     expect(validate(schema, await answer())).toEqual([]);
+  });
+
+  it('has the shape of the contract also when the flag show-discounts adds the field discount', async () => {
+    vi.stubEnv('VERSION', '1.2.3');
+    const response = await createHandler(async () => ({ version: '0.9.1', itemCount: 3 }), flagsOn)();
+    const body: unknown = JSON.parse(response.body);
+    expect((body as { products: { discount?: number }[] }).products.every((product) => product.discount === 10)).toBe(true);
+    expect(validate(schema, body)).toEqual([]);
+  });
+
+  it('lists discount as an optional number of a product, so adding it is an additive change', () => {
+    const product = schema.properties?.['products']?.items;
+    expect(product?.properties?.['discount']?.type).toBe('number');
+    expect(product?.required).not.toContain('discount');
+  });
+
+  it('would not pass the check if the field discount had a wrong type (the test can fail)', () => {
+    const body = {
+      service: 'catalogue',
+      version: '1.2.3',
+      core: { version: '0.9.1', itemCount: 3 },
+      products: [{ id: 'product-1', name: 'First product', price: 10, discount: '10%' }],
+    };
+    expect(validate(schema, body)).toHaveLength(1);
   });
 
   it('would not pass the check if the handler dropped a field of the contract (the test can fail)', () => {

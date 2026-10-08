@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { CfnOutput, Duration, RemovalPolicy, Stack, Tags } from 'aws-cdk-lib';
+import { ArnFormat, CfnOutput, Duration, RemovalPolicy, Stack, Tags } from 'aws-cdk-lib';
 import { CfnIntegration, HttpApi, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import type { CfnDashboard } from 'aws-cdk-lib/aws-cloudwatch';
@@ -51,6 +51,13 @@ export class CatalogueStack extends Stack {
     const coreUrl = StringParameter.valueForStringParameter(this, '/lab/core/url');
     const coreApiArn = StringParameter.valueForStringParameter(this, '/lab/core/api-arn');
 
+    // The lab-flags stack writes these three parameters in each account. The function needs them to find its flags
+    // with the AppConfig data API. CloudFormation reads them at deployment, as it reads the parameters of core.
+    // So lab-flags must be in an account before this stack can go there.
+    const flagsApplicationId = StringParameter.valueForStringParameter(this, '/lab/flags/application-id');
+    const flagsEnvironmentId = StringParameter.valueForStringParameter(this, '/lab/flags/environment-id');
+    const flagsProfileId = StringParameter.valueForStringParameter(this, '/lab/flags/profile-id');
+
     const productsFunction = new NodejsFunction(this, 'ProductsFunction', {
       entry: fileURLToPath(new URL('./products-handler.ts', import.meta.url)),
       runtime: Runtime.NODEJS_22_X,
@@ -62,7 +69,12 @@ export class CatalogueStack extends Stack {
         // The version of the release is a part of the function, so each release publishes a new Lambda version.
         VERSION: props.version,
         CORE_URL: coreUrl,
+        FLAGS_APPLICATION_ID: flagsApplicationId,
+        FLAGS_ENVIRONMENT_ID: flagsEnvironmentId,
+        FLAGS_PROFILE_ID: flagsProfileId,
         ...(props.config.injectFault ? { INJECT_FAULT: 'true' } : {}),
+        // Only a stage that allows the override header gets the variable. The handler ignores the header without it.
+        ...(props.config.allowFlagOverride ? { ALLOW_FLAG_OVERRIDE: 'true' } : {}),
       },
       logGroup: new LogGroup(this, 'ProductsFunctionLogs', {
         retention: props.config.logRetentionDays,
@@ -79,6 +91,22 @@ export class CatalogueStack extends Stack {
     // X-Ray actions do not support a resource, so the resource is *.
     // The endpoint works only with Transaction Search, which the core stack turns on for the account.
     productsFunction.addToRolePolicy(new PolicyStatement({ actions: ['xray:PutTraceSegments'], resources: ['*'] }));
+
+    // The function reads its feature flags with the AppConfig data API. These are the only two actions that it needs.
+    // The resource is the one configuration of the lab-flags stack (application, environment and profile).
+    productsFunction.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['appconfig:StartConfigurationSession', 'appconfig:GetLatestConfiguration'],
+        resources: [
+          this.formatArn({
+            service: 'appconfig',
+            resource: 'application',
+            arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
+            resourceName: `${flagsApplicationId}/environment/${flagsEnvironmentId}/configuration/${flagsProfileId}`,
+          }),
+        ],
+      }),
+    );
 
     // The alias `live` is what the API calls. CodeDeploy moves the traffic of the alias to each new version.
     // The service answers 502 when the call to core fails, and it does not throw. Lambda counts no error then,

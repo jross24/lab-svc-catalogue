@@ -54,6 +54,31 @@ describe('formatLogLine', () => {
     expect(JSON.parse(formatLogLine(FIELDS, NOW))).not.toHaveProperty('coldStart');
   });
 
+  it('adds the flag fields only when the handler reported flags', () => {
+    const entry = JSON.parse(
+      formatLogLine(
+        { ...FIELDS, flags: { 'show-discounts': true }, flagsSource: 'appconfig', flagsOverridden: true },
+        NOW,
+      ),
+    );
+    expect(entry).toMatchObject({
+      flags: { 'show-discounts': true },
+      flagsSource: 'appconfig',
+      flagsOverridden: true,
+    });
+    const plain: unknown = JSON.parse(formatLogLine(FIELDS, NOW));
+    expect(plain).not.toHaveProperty('flags');
+    expect(plain).not.toHaveProperty('flagsSource');
+    expect(plain).not.toHaveProperty('flagsOverridden');
+  });
+
+  it('writes flagsOverridden false, not nothing, when flags exist and no header changed them', () => {
+    const entry: unknown = JSON.parse(
+      formatLogLine({ ...FIELDS, flags: { 'show-discounts': false }, flagsSource: 'default', flagsOverridden: false }, NOW),
+    );
+    expect(entry).toMatchObject({ flagsSource: 'default', flagsOverridden: false });
+  });
+
   it('rounds the duration to three decimals', () => {
     const entry = JSON.parse(formatLogLine({ ...FIELDS, durationMs: 1.23456789 }, NOW)) as { durationMs: number };
     expect(entry.durationMs).toBe(1.235);

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const SERVICE = 'catalogue';
-const KNOWN_SERVICES = ['core', 'catalogue', 'account', 'web'];
+const KNOWN_SERVICES = ['core', 'flags', 'catalogue', 'account', 'web'];
 
 interface Pipeline {
   readonly service: unknown;
@@ -30,6 +30,11 @@ describe('pipeline.json', () => {
     for (const range of Object.values(requires as Record<string, unknown>)) {
       expect(range).toBeTypeOf('string');
     }
+  });
+
+  it('requires core and lab-flags, so that the deployment order check knows both dependencies', () => {
+    const { requires } = readPipeline();
+    expect(requires).toEqual({ core: '>=0.5.0', flags: '>=0.1.0' });
   });
 
   it('requires only known services, and not this service', () => {

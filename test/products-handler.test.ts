@@ -2,6 +2,20 @@ import type { APIGatewayProxyEventV2, Context } from 'aws-lambda';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CoreError } from '../lib/core-client.ts';
 import { createHandler, handler } from '../lib/products-handler.ts';
+import { flagsOff } from './support/flags.ts';
+
+// The real exported handler reads its flags with the AppConfig data API. This fake is the network boundary: it
+// answers that the flag is off, which is the state in Production. The tests of the flag are in products-handler-flags.test.ts.
+vi.mock('../lib/appconfig-data.ts', () => ({
+  sdkAppConfigDataApi: () => ({
+    startSession: async () => 'token',
+    getLatest: async () => ({
+      nextToken: 'token',
+      content: '{"show-discounts":{"enabled":false}}',
+      pollIntervalSeconds: 15,
+    }),
+  }),
+}));
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -13,14 +27,14 @@ const coreAnswers = async () => ({ version: '0.3.0', itemCount: 3 });
 
 describe('products handler when core answers', () => {
   it('returns JSON with status 200', async () => {
-    const response = await createHandler(coreAnswers)();
+    const response = await createHandler(coreAnswers, flagsOff)();
     expect(response.statusCode).toBe(200);
     expect(response.headers).toEqual({ 'content-type': 'application/json' });
   });
 
   it('returns its own name and version, the version and item count of core, and the products', async () => {
     vi.stubEnv('VERSION', '1.2.3');
-    const body: unknown = JSON.parse((await createHandler(coreAnswers)()).body);
+    const body: unknown = JSON.parse((await createHandler(coreAnswers, flagsOff)()).body);
     expect(body).toEqual({
       service: 'catalogue',
       version: '1.2.3',
@@ -34,7 +48,7 @@ describe('products handler when core answers', () => {
 
   it('returns the version "unknown" when the environment has no version', async () => {
     vi.stubEnv('VERSION', undefined);
-    const body: unknown = JSON.parse((await createHandler(coreAnswers)()).body);
+    const body: unknown = JSON.parse((await createHandler(coreAnswers, flagsOff)()).body);
     expect(body).toMatchObject({ version: 'unknown' });
   });
 });
@@ -45,7 +59,7 @@ describe('products handler when the core call fails', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const response = await createHandler(async () => {
       throw new CoreError('core returned HTTP 403');
-    })();
+    }, flagsOff)();
     expect(response.statusCode).toBe(502);
     expect(response.headers).toEqual({ 'content-type': 'application/json' });
     expect(JSON.parse(response.body)).toEqual({
@@ -61,7 +75,7 @@ describe('products handler when the core call fails', () => {
     const unexpected = new Error('internal detail');
     const response = await createHandler(async () => {
       throw unexpected;
-    })();
+    }, flagsOff)();
     expect(response.statusCode).toBe(502);
     expect(JSON.parse(response.body)).toMatchObject({ cause: 'unexpected error' });
     expect(response.body).not.toContain('internal detail');
@@ -75,18 +89,18 @@ describe('products handler fault switch', () => {
   it('throws when INJECT_FAULT is "true", so that Lambda counts an error, and does not call core', async () => {
     getCore.mockClear();
     vi.stubEnv('INJECT_FAULT', 'true');
-    await expect(createHandler(getCore)()).rejects.toThrow(/injected fault/);
+    await expect(createHandler(getCore, flagsOff)()).rejects.toThrow(/injected fault/);
     expect(getCore).not.toHaveBeenCalled();
   });
 
   it.each(['false', '', 'TRUE', '1'])('does not throw when INJECT_FAULT is %j', async (value) => {
     vi.stubEnv('INJECT_FAULT', value);
-    await expect(createHandler(coreAnswers)()).resolves.toMatchObject({ statusCode: 200 });
+    await expect(createHandler(coreAnswers, flagsOff)()).resolves.toMatchObject({ statusCode: 200 });
   });
 
   it('does not throw when INJECT_FAULT is not set', async () => {
     vi.stubEnv('INJECT_FAULT', undefined);
-    await expect(createHandler(coreAnswers)()).resolves.toMatchObject({ statusCode: 200 });
+    await expect(createHandler(coreAnswers, flagsOff)()).resolves.toMatchObject({ statusCode: 200 });
   });
 });
 
@@ -103,6 +117,10 @@ function stubEnvironment(): void {
   vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY');
   vi.stubEnv('AWS_SESSION_TOKEN', 'fake-session-token');
   vi.stubEnv('INJECT_FAULT', undefined);
+  vi.stubEnv('FLAGS_APPLICATION_ID', 'app1234');
+  vi.stubEnv('FLAGS_ENVIRONMENT_ID', 'env5678');
+  vi.stubEnv('FLAGS_PROFILE_ID', 'prof9012');
+  vi.stubEnv('ALLOW_FLAG_OVERRIDE', undefined);
 }
 
 // The handler writes its log line and its metric line to stdout. Collect them, and keep the test output clean.

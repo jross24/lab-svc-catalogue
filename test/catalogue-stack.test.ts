@@ -12,7 +12,7 @@ const CANARY: StageConfig['release'] = { kind: 'canary', percent: 10, minutes: 5
 function synth(version = '1.2.3', config: Partial<StageConfig> = {}) {
   const stack = new CatalogueStack(new App(), 'Catalogue', {
     version,
-    config: { logRetentionDays: RetentionDays.ONE_WEEK, release: ALL_AT_ONCE, injectFault: false, ...config },
+    config: { logRetentionDays: RetentionDays.ONE_WEEK, release: ALL_AT_ONCE, injectFault: false, allowFlagOverride: false, ...config },
   });
   return { stack, template: Template.fromStack(stack) };
 }
@@ -57,14 +57,44 @@ describe('CatalogueStack', () => {
     });
   });
 
-  it('allows the function to invoke only the core API ARN from SSM, and to send traces', () => {
+  it('reads the three flag IDs from SSM at deployment, the same way as the parameters of core', () => {
+    ssmParameterId(template, '/lab/flags/application-id');
+    ssmParameterId(template, '/lab/flags/environment-id');
+    ssmParameterId(template, '/lab/flags/profile-id');
+  });
+
+  it('gives the three flag IDs to the function as environment variables', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: {
+        Variables: {
+          FLAGS_APPLICATION_ID: { Ref: ssmParameterId(template, '/lab/flags/application-id') },
+          FLAGS_ENVIRONMENT_ID: { Ref: ssmParameterId(template, '/lab/flags/environment-id') },
+          FLAGS_PROFILE_ID: { Ref: ssmParameterId(template, '/lab/flags/profile-id') },
+        },
+      },
+    });
+  });
+
+  it('sets ALLOW_FLAG_OVERRIDE only for a stage that allows the override header', () => {
+    const variablesOf = (config: Partial<StageConfig>) =>
+      (
+        Object.values(synth('1.2.3', config).template.findResources('AWS::Lambda::Function'))[0] as {
+          Properties: { Environment: { Variables: Record<string, string> } };
+        }
+      ).Properties.Environment.Variables;
+    expect(variablesOf({ allowFlagOverride: true })).toMatchObject({ ALLOW_FLAG_OVERRIDE: 'true' });
+    expect(variablesOf({ allowFlagOverride: false })).not.toHaveProperty('ALLOW_FLAG_OVERRIDE');
+  });
+
+  it('allows the function to invoke only the core API ARN from SSM, to send traces, and to read the flags', () => {
     template.resourceCountIs('AWS::IAM::Policy', 1);
     const policy = Object.values(template.findResources('AWS::IAM::Policy'))[0] as {
       Properties: { PolicyDocument: { Statement: { Action: string | string[]; Effect: string; Resource: unknown }[] } };
     };
     const statements = policy.Properties.PolicyDocument.Statement;
-    // The stack adds the X-Ray statement for the spans. No other statement exists, so the function can do nothing else.
-    expect(statements).toHaveLength(2);
+    // The stack adds the X-Ray statement for the spans and the AppConfig statement for the flags. No other statement
+    // exists, so the function can do nothing else.
+    expect(statements).toHaveLength(3);
     expect(statements).toContainEqual({
       Action: 'execute-api:Invoke',
       Effect: 'Allow',
@@ -74,6 +104,38 @@ describe('CatalogueStack', () => {
       Action: 'xray:PutTraceSegments',
       Effect: 'Allow',
       Resource: '*',
+    });
+  });
+
+  it('allows only the two AppConfig data actions, on the one configuration of the three flag IDs', () => {
+    const policy = Object.values(template.findResources('AWS::IAM::Policy'))[0] as {
+      Properties: { PolicyDocument: { Statement: { Action: string | string[]; Effect: string; Resource: unknown }[] } };
+    };
+    const statement = policy.Properties.PolicyDocument.Statement.find((candidate) =>
+      JSON.stringify(candidate.Action).includes('appconfig'),
+    );
+    expect(statement).toEqual({
+      Action: ['appconfig:StartConfigurationSession', 'appconfig:GetLatestConfiguration'],
+      Effect: 'Allow',
+      Resource: {
+        'Fn::Join': [
+          '',
+          [
+            'arn:',
+            { Ref: 'AWS::Partition' },
+            ':appconfig:',
+            { Ref: 'AWS::Region' },
+            ':',
+            { Ref: 'AWS::AccountId' },
+            ':application/',
+            { Ref: ssmParameterId(template, '/lab/flags/application-id') },
+            '/environment/',
+            { Ref: ssmParameterId(template, '/lab/flags/environment-id') },
+            '/configuration/',
+            { Ref: ssmParameterId(template, '/lab/flags/profile-id') },
+          ],
+        ],
+      },
     });
   });
 

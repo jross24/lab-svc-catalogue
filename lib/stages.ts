@@ -8,16 +8,30 @@ export interface StageConfig {
   // A device for the release drill. When it is true, the function throws on each call.
   // Do not use it as a production practice. See "The Production drill" in the README.
   readonly injectFault: boolean;
+  // When it is true, a request header (x-lab-flags: show-discounts=on) overrides a feature flag for that one request.
+  // Only Test and Dev allow it. Staging and Production ignore the header. See "Feature flags" in the README.
+  readonly allowFlagOverride: boolean;
 }
 
 // The pipeline deploys these stages. Each stage goes to its own AWS account.
 export const STAGES = {
-  Test: { logRetentionDays: RetentionDays.ONE_WEEK, release: { kind: 'allAtOnce' }, injectFault: false },
-  Staging: { logRetentionDays: RetentionDays.ONE_WEEK, release: { kind: 'allAtOnce' }, injectFault: false },
+  Test: {
+    logRetentionDays: RetentionDays.ONE_WEEK,
+    release: { kind: 'allAtOnce' },
+    injectFault: false,
+    allowFlagOverride: true,
+  },
+  Staging: {
+    logRetentionDays: RetentionDays.ONE_WEEK,
+    release: { kind: 'allAtOnce' },
+    injectFault: false,
+    allowFlagOverride: false,
+  },
   Production: {
     logRetentionDays: RetentionDays.ONE_MONTH,
     release: { kind: 'canary', percent: 10, minutes: 5 },
     injectFault: false,
+    allowFlagOverride: false,
   },
 } as const satisfies Record<string, StageConfig>;
 
@@ -26,4 +40,5 @@ export const DEV_STAGE: StageConfig = {
   logRetentionDays: RetentionDays.THREE_DAYS,
   release: { kind: 'allAtOnce' },
   injectFault: false,
+  allowFlagOverride: true,
 };
