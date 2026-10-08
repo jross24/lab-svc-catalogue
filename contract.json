@@ -1,0 +1,41 @@
+{
+  "service": "catalogue",
+  "consumers": ["web"],
+  "endpoints": {
+    "GET /products": {
+      "request": { "required": [], "optional": [] },
+      "responses": {
+        "200": {
+          "type": "object",
+          "required": ["service", "version", "core", "products"],
+          "properties": {
+            "service": { "type": "string", "description": "The name of the service. Always catalogue." },
+            "version": { "type": "string", "description": "The version of the release that answered." },
+            "core": {
+              "type": "object",
+              "description": "Proof that the answer passed through the core service.",
+              "required": ["version", "itemCount"],
+              "properties": {
+                "version": { "type": "string", "description": "The version of core that answered." },
+                "itemCount": { "type": "integer", "description": "The number of items that core returned." }
+              }
+            },
+            "products": {
+              "type": "array",
+              "description": "All the products.",
+              "items": {
+                "type": "object",
+                "required": ["id", "name", "price"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "name": { "type": "string" },
+                  "price": { "type": "number" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

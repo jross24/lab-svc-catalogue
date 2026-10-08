@@ -288,7 +288,7 @@ The unit tests in "What an error means here" and the run in `lab-dev` cover the 
 
 ## How a change reaches Production
 
-1. Open a pull request. The `pr` workflow runs lint, typecheck, the tests and `cdk synth`. It also scans the dependencies and the commits for secrets, and it checks the workflow files. It posts the `cdk diff` against Production as one comment. A delete or a replacement of a stateful resource fails the check until someone adds the label `destructive-change-approved`. The [README of lab-workflows](https://github.com/jross24/lab-workflows#the-cdk-diff-comment) explains the comment.
+1. Open a pull request. The `pr` workflow runs lint, typecheck, the tests and `cdk synth`. It also scans the dependencies and the commits for secrets, and it checks the workflow files. It compares the two contract files with Production (see "The contract files"). It posts the `cdk diff` against Production as one comment. A delete or a replacement of a stateful resource fails the check until someone adds the label `destructive-change-approved`. The [README of lab-workflows](https://github.com/jross24/lab-workflows#the-cdk-diff-comment) explains the comment.
 2. Merge the pull request with a squash. The `release` workflow starts.
 3. The workflow works out the next version from the commit title and creates the tag, for example `v0.2.0`.
 4. The workflow builds one time and stores the zipped `cdk.out` in a GitHub release.
@@ -308,6 +308,13 @@ gh workflow run redeploy.yml -f version=0.1.0 -f environment=test
 ```
 
 The three files in `.github/workflows/` are copies of the files in lab-svc-core. This repository has no other pipeline code.
+
+## The contract files
+
+The file `contract.json` says what `GET /products` promises to the web application, and `expectations.json` says which fields of core this service reads.
+The service reads only `version` and the number of `items`, so it reads neither `name` nor `title` of an item.
+On each pull request, the job `pr / contracts` compares both files with the releases that run in Production. See [Contract tests](https://github.com/jross24/lab-workflows#contract-tests) in the README of lab-workflows.
+It fails a pull request that removes a field a neighbour still reads, or that needs a field Production does not have yet.
 
 ## Run the checks locally
 
@@ -461,7 +468,9 @@ A copy never writes a baseline parameter, and it never reads the parameter of an
 | `lib/products-handler.ts` | The Lambda handler and the fault switch. |
 | `lib/core-client.ts` | Calls `GET /items` of core as a client span, and checks the answer. |
 | `lib/sign.ts` | Signs the call to core with AWS Signature Version 4. |
-| `test/` | The unit tests (vitest). `tracing.test.ts`, `xray-exporter.test.ts` and `sigv4.test.ts` are the same files as in lab-svc-core. |
+| `contract.json` | What `GET /products` promises to the web application. `test/contract.test.ts` checks that the real handler answers as the file says. |
+| `expectations.json` | The fields of core that this service reads. `test/expectations.test.ts` checks that the client of core needs exactly these fields. |
+| `test/` | The unit tests (vitest). `tracing.test.ts`, `xray-exporter.test.ts`, `sigv4.test.ts`, `contract-schema.test.ts` and `support/contract-schema.ts` are the same files as in lab-svc-core. |
 | `.github/workflows/` | Three small files that call the workflows in lab-workflows. |
 
 ## Release gate
