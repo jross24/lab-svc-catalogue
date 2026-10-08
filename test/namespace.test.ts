@@ -302,7 +302,7 @@ describe('an invalid namespace', () => {
       () =>
         new CatalogueStack(new App(), 'Catalogue', {
           version: '1.2.3',
-          config: { logRetentionDays: RetentionDays.ONE_WEEK, release: { kind: 'allAtOnce' }, injectFault: false, allowFlagOverride: false },
+          config: { logRetentionDays: RetentionDays.ONE_WEEK, release: { kind: 'allAtOnce' }, injectFault: false, allowFlagOverride: false, traceSampleRatio: 1 },
           namespace: 'Bad-Name',
         }),
     ).toThrow(/namespace must be 1 to 20 characters/);

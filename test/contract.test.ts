@@ -60,7 +60,7 @@ describe('contract.json', () => {
   it('lists exactly the routes that the stack has', { timeout: 30_000 }, () => {
     const stack = new CatalogueStack(new App({ context: { 'aws:cdk:bundling-stacks': [] } }), 'Catalogue', {
       version: '1.2.3',
-      config: { logRetentionDays: RetentionDays.ONE_WEEK, release: { kind: 'allAtOnce' }, injectFault: false, allowFlagOverride: false },
+      config: { logRetentionDays: RetentionDays.ONE_WEEK, release: { kind: 'allAtOnce' }, injectFault: false, allowFlagOverride: false, traceSampleRatio: 1 },
     });
     const routes = Object.values(Template.fromStack(stack).findResources('AWS::ApiGatewayV2::Route')).map(
       (route) => (route as { Properties: { RouteKey: string } }).Properties.RouteKey,

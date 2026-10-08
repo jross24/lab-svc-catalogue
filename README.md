@@ -98,11 +98,13 @@ Each stage holds one stack, `lab-svc-catalogue`. The file `lib/stages.ts` holds 
 | `release` | all at once | all at once | canary: 10 percent, then 100 percent after 5 minutes |
 | `injectFault` | false | false | false |
 | `allowFlagOverride` | true | false | false |
+| `traceSampleRatio` | 1 | 1 | 1 |
 
 Every stage has the same resources: the same alias, the same CodeDeploy deployment group, the same three alarms and the same dashboard.
 Only the values in the table differ. A unit test compares the three templates to check this.
 `injectFault` is a device for the release drill. See "The Production drill". No stage sets it in `main`.
 `allowFlagOverride` lets a request header override a feature flag. Only Test and Dev allow it. See "Feature flags".
+`traceSampleRatio` is the share of new traces that are sampled. See "The export stays on the request path, and the sampling ratio" in the Tracing section.
 
 The code names no AWS account and no region. A stack goes to the account of the credentials that deploy it.
 All three stages use the same bundled Lambda code.
@@ -122,7 +124,7 @@ This section shows what is the same, what is different, and the numbers that bel
 - The fault switch `injectFault` and the drill. The log retention of each stage.
 - Nine shared files, copied from core with no change: `lib/gradual-release.ts`, `lib/service-dashboard.ts`, `lib/instrument.ts`, `lib/logger.ts`, `lib/metrics.ts`,
   `lib/tracing.ts`, `lib/xray-exporter.ts`, `lib/sigv4.ts` and `lib/function-defaults.ts`.
-  Three test files are also the same as in core: `test/tracing.test.ts`, `test/xray-exporter.test.ts` and `test/sigv4.test.ts`.
+  Four test files are also the same as in core: `test/tracing.test.ts`, `test/xray-exporter.test.ts`, `test/sigv4.test.ts` and `test/function-defaults.test.ts`.
 
 ### What is different from core
 
@@ -222,6 +224,23 @@ The stack makes each integration depend on each invoke permission of the API. A 
 The service traces its requests with OpenTelemetry. A request through the web application gives one trace across web, this service and core.
 The decision, the measurements and the trade-off are in the [Tracing section of the lab-svc-core README](https://github.com/jross24/lab-svc-core#tracing).
 This section shows what is specific to this service.
+
+### The export stays on the request path, and the sampling ratio
+
+The owner decided that the export of the spans stays on the request path, with 512 MB of memory ([lab-platform#28](https://github.com/jross24/lab-platform/issues/28)).
+The answer of a request waits for one signed call to X-Ray. At 512 MB this costs about 35 ms for a warm request, and about 450 ms for the first request of a new environment.
+The lab accepts this cost, because the other ways cost more than they give here. The cost table for 128 to 1024 MB is in the [Tracing section of the lab-svc-core README](https://github.com/jross24/lab-svc-core#tracing).
+
+What changed is the sampling. A request that is not sampled makes no call to X-Ray, so it does not pay the cost.
+
+**How to set the ratio.** `traceSampleRatio` in `lib/stages.ts` is a number from 0 to 1 for each stage. The value 1 samples all requests, and every stage has it today.
+`lib/catalogue-stack.ts` writes the number into the variable `TRACE_SAMPLE_RATIO` of the function (`tracingEnvironment` in `lib/function-defaults.ts`). `lib/tracing.ts` reads it.
+To change the ratio, edit the number and open a pull request. The pipeline deploys it like any other change. A number outside 0 to 1 stops `cdk synth`.
+
+The sampler is parent based. A request with a `traceparent` header follows its caller: a sampled parent is always followed, and a parent that is not sampled never is.
+A request with no parent is sampled by its trace ID, for the share that the ratio names. Web starts the trace of a page request and sends `traceparent`, so this service follows the decision of web. Its own ratio applies only to a request that comes with no `traceparent` header, for example a direct call.
+The log line keeps the trace ID of a request that is not sampled, but X-Ray then has no trace for this ID.
+The unit tests in `test/tracing.test.ts` prove the rules: ratio 0 gives no call to the exporter, and ratio 1 gives one.
 
 ### What the service records
 
@@ -378,7 +397,9 @@ To go back to an old version, run the `redeploy` workflow. It deploys the stored
 gh workflow run redeploy.yml -f version=0.1.0 -f environment=test
 ```
 
-The three files in `.github/workflows/` are copies of the files in lab-svc-core. This repository has no other pipeline code.
+The directory `.github/workflows/` has four files.
+`pr.yml`, `release.yml` and `redeploy.yml` are byte-for-byte copies of the files in lab-svc-core. `preview.yml` belongs to this repository, and core has no such file.
+It deploys the preview of a pull request (see "The preview of a pull request"). This repository has no other pipeline code.
 
 ## The contract files
 
@@ -544,8 +565,8 @@ A copy never writes a baseline parameter, and it never reads the parameter of an
 | `lib/sign.ts` | Signs the call to core with AWS Signature Version 4. |
 | `contract.json` | What `GET /products` promises to the web application. `test/contract.test.ts` checks that the real handler answers as the file says. |
 | `expectations.json` | The fields of core that this service reads. `test/expectations.test.ts` checks that the client of core needs exactly these fields. |
-| `test/` | The unit tests (vitest). `tracing.test.ts`, `xray-exporter.test.ts`, `sigv4.test.ts`, `contract-schema.test.ts` and `support/contract-schema.ts` are the same files as in lab-svc-core. |
-| `.github/workflows/` | Three small files that call the workflows in lab-workflows. |
+| `test/` | The unit tests (vitest). `tracing.test.ts`, `xray-exporter.test.ts`, `sigv4.test.ts`, `function-defaults.test.ts`, `contract-schema.test.ts` and `support/contract-schema.ts` are the same files as in lab-svc-core. |
+| `.github/workflows/` | Four small files that call the workflows in lab-workflows: `pr.yml`, `preview.yml`, `redeploy.yml` and `release.yml`. |
 
 ## Release gate
 

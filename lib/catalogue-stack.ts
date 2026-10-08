@@ -9,7 +9,7 @@ import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { LogGroup } from 'aws-cdk-lib/aws-logs';
 import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import type { Construct } from 'constructs';
-import { FUNCTION_BUNDLING, FUNCTION_MEMORY_MB } from './function-defaults.ts';
+import { FUNCTION_BUNDLING, FUNCTION_MEMORY_MB, tracingEnvironment } from './function-defaults.ts';
 import { GradualRelease } from './gradual-release.ts';
 import { NAMESPACE_TAG, namesFor } from './namespace.ts';
 import { ServiceDashboard } from './service-dashboard.ts';
@@ -68,6 +68,8 @@ export class CatalogueStack extends Stack {
       environment: {
         // The version of the release is a part of the function, so each release publishes a new Lambda version.
         VERSION: props.version,
+        // The share of the requests that make a trace. The setting of the stage is in stages.ts.
+        ...tracingEnvironment(props.config.traceSampleRatio),
         CORE_URL: coreUrl,
         FLAGS_APPLICATION_ID: flagsApplicationId,
         FLAGS_ENVIRONMENT_ID: flagsEnvironmentId,
