@@ -1,4 +1,4 @@
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto'; 
 
 // AWS Signature Version 4 for a request with a short body. The trace exporter uses it to send spans to the
 // OTLP endpoint of X-Ray. The function is small on purpose: it needs no AWS SDK package.
