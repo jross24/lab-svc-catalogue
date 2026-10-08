@@ -75,7 +75,11 @@ Deploy core to an account before you deploy this service to that account.
 
 CloudFormation reads `/lab/core/url` and `/lab/core/api-arn` when it deploys this stack.
 If core is not in the account, the parameters do not exist, and the deployment fails before it creates a resource.
-The pipeline deploys each service on its own, so it does not enforce this order. You must keep it.
+The file `pipeline.json` names the services that this service needs: `core >=0.5.0`.
+Before each deploy job changes an environment, the pipeline reads `/lab/core/version` in that environment.
+It stops the job with a clear message if core is not there, or if its version is outside the range. The job fails before CloudFormation starts, so it changes nothing.
+The pipeline also compares the set of versions that passed in Test with the environment. This service has no range for web and account, so an environment must run at
+least the versions that the E2E suite tested. The README of [lab-workflows](https://github.com/jross24/lab-workflows) explains both checks.
 
 CloudFormation reads the parameters again at each deployment of this stack.
 If core gets a new URL, release or redeploy this service to pick it up.
@@ -288,8 +292,12 @@ The unit tests in "What an error means here" and the run in `lab-dev` cover the 
 2. Merge the pull request with a squash. The `release` workflow starts.
 3. The workflow works out the next version from the commit title and creates the tag, for example `v0.2.0`.
 4. The workflow builds one time and stores the zipped `cdk.out` in a GitHub release.
-5. The workflow deploys that same zip to Test, then to Staging. In both, CodeDeploy moves the traffic at once.
-6. The workflow waits. A reviewer approves the `production` environment in GitHub. Then the workflow deploys the same zip to Production. CodeDeploy moves 10 percent of the traffic, waits 5 minutes, and moves the rest.
+5. The workflow takes the lock of Test. It checks the deployment order, deploys that same zip to Test, and runs the end-to-end suite. The suite also checks that Test reports the version of the release. The workflow records the four versions that passed as `tested-with.json` on the GitHub release.
+6. The workflow checks the order and the tested set again in Staging, deploys the zip there, and runs the smoke subset of the suite. CodeDeploy moves the traffic at once in Test and in Staging.
+7. The workflow waits. A reviewer approves the `production` environment in GitHub. A newer release that reaches this point cancels an older release that still waits. After the approval the workflow checks again, deploys the same zip to Production, and runs the smoke subset. CodeDeploy moves 10 percent of the traffic, waits 5 minutes, and moves the rest.
+   If the smoke subset fails, the job fails and a redeploy of the earlier version waits for the reviewer.
+
+The README of [lab-workflows](https://github.com/jross24/lab-workflows) explains each step.
 
 A title that starts with `feat:` gives a minor version. A title with `!` before the colon gives a major version. Any other title gives a patch version.
 
