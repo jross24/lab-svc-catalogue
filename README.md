@@ -396,7 +396,7 @@ gh workflow run redeploy.yml -f version=0.1.0 -f environment=test
 ```
 
 The directory `.github/workflows/` has four files.
-`pr.yml`, `release.yml` and `redeploy.yml` are byte-for-byte copies of the files in lab-svc-core. `preview.yml` belongs to this repository, and core has no such file.
+`pr.yml`, `release.yml` and `redeploy.yml` are byte-for-byte copies of the files in lab-svc-core. `preview.yml` is the same as the file in lab-svc-core, except that core sets a smoke path for its private API (`/items`, expected status 403).
 It deploys the preview of a pull request (see "The preview of a pull request"). This repository has no other pipeline code.
 
 ## The contract files
