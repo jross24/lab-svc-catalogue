@@ -39,7 +39,7 @@ export class CatalogueStack extends Stack {
   constructor(scope: Construct, id: string, props: CatalogueStackProps) {
     const names = namesFor(props.namespace);
     // No env here: the stack takes the account and the region of the credentials that deploy it.
-    super(scope, id, { stackName: names.stackName });
+    super(scope, id, { stackName: names.stackName, description: 'lab-svc-catalogue: test of the diff comment (lab-platform#44)' });
 
     // The tag goes to the stack and to every resource that can have a tag. A copy with no namespace has no tag.
     if (props.namespace !== undefined) Tags.of(this).add(NAMESPACE_TAG, props.namespace);
