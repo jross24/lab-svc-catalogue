@@ -270,7 +270,7 @@ The function sends the spans of a request to the OTLP endpoint of X-Ray (`https:
 The request is signed with AWS Signature Version 4 for the service `xray`. `lib/sigv4.ts` does this signing, and `lib/sign.ts` still signs the call to core.
 A failed export never fails a request. The function writes one `WARN` line to the log.
 
-The endpoint works only when CloudWatch Transaction Search is on in the account. The stack of core turns it on. This stack does not touch it.
+The endpoint works only when CloudWatch Transaction Search is on in the account. The platform stack of lab-platform turns it on. Neither this stack nor the stack of core touches it.
 The variable `TRACING=off` switches tracing off. Outside Lambda, tracing is off.
 
 ### What the stack changes
@@ -487,7 +487,9 @@ So the baseline copy, the laptop copy `my-test` and the preview `pr-12` can run 
 
 **Core.** A copy with a namespace still reads `/lab/core/url` and `/lab/core/api-arn`. So it calls the baseline copy of core.
 Deploy the baseline copy of core first. A preview of this service finds core in the long-lived baseline of the account.
-Core has no namespace yet. When it has one, a context value `coreNamespace` can point this service at a preview of core. This service does not have that value yet.
+Core has a namespace too. A copy of core with a namespace writes `/lab/ns/<core namespace>/core/url` and `/lab/ns/<core namespace>/core/api-arn`.
+This service has no context value `coreNamespace` that reads them, and none is planned. A test of a change here runs against the baseline copy of core.
+Account has the value. Add it here when a change in this service needs a preview of core (see step 11 of "How another service adopts the namespace").
 
 **The version.** Give each copy its own `version`. The version is a dimension of the metrics `requests` and `errors`.
 `ServiceErrorsAlarm` reads the dimension. Two copies with the same version share their metric lines. So the alarm of one copy can fire on the errors of the other.
@@ -511,7 +513,7 @@ The workflow `.github/workflows/preview.yml` calls the shared workflow of lab-wo
 
 - A comment on the pull request shows the URL. Call `GET <URL>/products`. The answer has the version of the pull request, `0.0.0-pr12.<commit>`, and the data of core.
 - A push to the pull request deploys the new commit to the same URL.
-- The copy reads core from the baseline copy of the account, because core has no namespace yet.
+- The copy reads core from the baseline copy of the account. The workflow does not set `coreNamespace`, and this service has no such value.
 - When the pull request closes, or when you remove the label, the workflow removes the stack. A scheduled workflow removes any copy that stays behind.
 
 The names are in the table of "Namespaces". The README of [lab-workflows](https://github.com/jross24/lab-workflows#the-temporary-environment-of-a-pull-request) explains the jobs and the security note.
@@ -519,23 +521,34 @@ A person with write access can deploy anything to the developer account with thi
 
 ### How another service adopts the namespace
 
-Use this list for core, account and web. [lab-platform#36](https://github.com/jross24/lab-platform/issues/36) tracks the work.
-The files `lib/namespace.ts` and `test/namespace.test.ts` in this repository are the model.
+Core, account and web have adopted the namespace with this list ([lab-platform#36](https://github.com/jross24/lab-platform/issues/36)). Use it for a new service.
+Each service has its own `lib/namespace.ts` and `test/namespace.test.ts`. They hold the names of one service, so they differ by design and are not in the set of shared files.
+Take this repository as the model, and look at the differences that the list names.
 
-1. Copy `lib/namespace.ts`. Change the four names in `namesFor` to the names of the service. Keep `parseNamespace` as it is, so all services accept the same values.
+1. Copy `lib/namespace.ts`. Change the names in `namesFor` to the names of the service. This service, account and web have four: the stack, the URL parameter, the version parameter and the dashboard. Core has six: it adds the API ARN parameter and the rollback floor parameter.
+   Keep the pattern and the check in `parseNamespace`, so all services accept the same values. Account and web give `parseNamespace` a second argument, the name of the context value, so the error message names the right value (step 11). This service does not need it.
 2. In `lib/app.ts`, read the context value `namespace`. Throw when `dev` is off. Call `parseNamespace`. Pass the value to the `Dev` stage and to the stack as an optional property.
 3. In the stack, take the stack name from `namesFor`. With no namespace the name must not change.
-4. Rename every SSM parameter that the stack writes to `/lab/ns/<ns>/<service>/<name>`. This service writes two, `url` and `version`. Core also writes `api-arn`.
+4. Rename every SSM parameter that the stack writes to `/lab/ns/<ns>/<service>/<name>`. This service, account and web write two: `url` and `version`. Core writes four: `url`, `api-arn`, `version` and `min-rollback-version`.
+   The migration step of core writes the rollback floor, not CloudFormation. So a copy of core needs its own name for it, and `cdk destroy` of the copy removes it.
 5. Set the dashboard name. The shared dashboard code fixes it, so use `addPropertyOverride('DashboardName', ...)` on the `CfnDashboard`, and only when there is a namespace.
 6. Add the tag with `Tags.of(stack).add('lab-namespace', namespace)`, only when there is a namespace.
 7. Search the stack for any other fixed name: `functionName`, `logGroupName`, `roleName`, `alarmName`, `exportName`, and the names of buckets and tables. Remove it or add the namespace.
-8. Core only: do not create CloudWatch Transaction Search in a copy with a namespace. It is a setting of the whole account.
+   Core gives its table no fixed name, so each copy of core has its own table.
+8. Do not add a resource for CloudWatch Transaction Search. It is a setting of the whole account, and the platform stack of lab-platform owns it. No service has a resource for it, so a copy cannot create or remove it.
 9. Copy `test/namespace.test.ts` and change the names. Keep the test that proves that the stages and the `Dev` stage with no namespace do not change.
-10. Update the README of the service in the same pull request.
+10. Copy `.github/workflows/preview.yml` from a service. It calls the shared workflow of lab-workflows, which deploys the `Dev` stage under `pr-<number>` and then calls `GET /products`. It expects HTTP 200. The jobs read the repository secret `PR_ACCOUNT_ID_DEV`.
+    Set the inputs only where the service differs. Account sets `smoke-path: /profile`. Web sets `smoke-path: /`. A service with a private API sets `smoke-expect-status`: core sets `smoke-path: /items` and `smoke-expect-status: '403'`, because an unsigned call to a route with IAM authorization gets 403. This service sets nothing.
+11. Only a service that calls a provider: add a provider context value, so a copy on a laptop can call a preview of the provider. Account has `coreNamespace`. Web has `catalogueNamespace` and `accountNamespace`.
+    - The rules are the rules of `namespace`, and one more: the value is valid only together with `namespace`. A baseline copy has no namespace, and a preview of a provider goes away when its pull request closes.
+    - The copy reads `/lab/ns/<provider namespace>/<provider>/url`. Account also reads `/lab/ns/<provider namespace>/core/api-arn`, for its IAM policy. Web reads only URLs, because the APIs that it calls are public.
+    - The value changes what the copy reads. It never changes what the copy writes. The preview workflow does not set it.
+    - Test it in its own file: `test/core-namespace.test.ts` in account, `test/namespace-providers.test.ts` in web. The tests check the names that follow from the value, the error for a value that is not valid, and the error when `namespace` is missing.
+12. Update the README of the service in the same pull request.
 
 **The consumer and provider rule.** A copy writes its parameters only under its own path `/lab/ns/<ns>/`.
 A copy reads the baseline path of its provider by default, for example `/lab/core/url`.
-A copy reads the path of a provider preview only when a context value names it, for example `coreNamespace`. The provider must adopt the namespace first.
+A copy reads the path of a provider preview only when a context value names it, for example `coreNamespace`, and only together with `namespace`. The provider must adopt the namespace first.
 A copy never writes a baseline parameter, and it never reads the parameter of another copy by chance.
 
 ## Layout
