@@ -295,7 +295,7 @@ The log line and the spans carry the same trace ID. A trace that starts in the w
 ## Feature flags
 
 The flag `show-discounts` decides whether `GET /products` shows a discount.
-The flag lives in [lab-flags](https://github.com/jross24/lab-flags). It is off in every stage.
+The flag lives in [lab-flags](https://github.com/jross24/lab-flags). It is on in Test, Staging and Production.
 
 When the flag is on, each product has one more field, `discount`. The value is a mock: 10, which means 10 percent.
 When the flag is off, the answer is the same as before the flag existed. The field `discount` is optional in `contract.json`, so adding it is an additive change.
@@ -341,7 +341,7 @@ The log line of each request shows what the request used:
 
 ### The override header: Test only
 
-A test needs both states of the flag, and the flag is off everywhere. So a stage can allow a request header that overrides the flag for that one request.
+A test needs both states of the flag, and the flag is on in Test, Staging and Production. So a stage can allow a request header that overrides the flag for that one request.
 The stage setting `allowFlagOverride` controls it. The value is `true` for Test and Dev, and `false` for Staging and Production.
 
 Where the setting is `true`, the stack sets the environment variable `ALLOW_FLAG_OVERRIDE`. The header `x-lab-flags` then sets the flag:
